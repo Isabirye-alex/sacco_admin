@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SACCO Admin Portal</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- Login screen -->
+  <div id="login-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <h1>SACCO Admin Portal</h1>
+      </div>
+      <p class="muted">Staff sign-in for member, savings, loan, and back-office management.</p>
+      <form id="login-form">
+        <label>Email
+          <input type="email" id="login-email" required autocomplete="username" />
+        </label>
+        <label>Password
+          <input type="password" id="login-password" required autocomplete="current-password" />
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+        <p id="login-error" class="form-error" hidden></p>
+      </form>
+      <p class="muted small">API base URL is configured in <code>js/config.js</code>.</p>
+    </div>
+  </div>
+
+  <!-- App shell (shown once authenticated) -->
+  <div id="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand brand-sidebar">
+        <div class="brand-mark">S</div>
+        <span>SACCO<span class="staff-tag">Staff</span></span>
+      </div>
+      <nav id="nav-links">
+        <a href="#/dashboard" data-route="dashboard">Dashboard</a>
+        <a href="#/members" data-route="members">Members</a>
+        <a href="#/savings" data-route="savings">Savings</a>
+        <a href="#/loans" data-route="loans">Loans</a>
+        <a href="#/accounting" data-route="accounting">Accounting</a>
+        <a href="#/payroll" data-route="payroll">HR &amp; Payroll</a>
+        <a href="#/shares" data-route="shares">Shares</a>
+        <a href="#/groups" data-route="groups">Groups</a>
+        <a href="#/notifications" data-route="notifications">Notifications</a>
+        <a href="#/risk" data-route="risk">Risk &amp; Compliance</a>
+        <a href="#/users" data-route="users">Users &amp; Audit</a>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="user-chip" class="user-chip"></div>
+        <button id="logout-btn" class="btn btn-ghost btn-block">Log out</button>
+      </div>
+    </aside>
+
+    <div class="main-col">
+      <header class="topbar">
+        <button id="menu-toggle" class="icon-btn" aria-label="Toggle menu">&#9776;</button>
+        <h2 id="page-title">Dashboard</h2>
+      </header>
+      <main id="view-root" class="view-root">
+        <!-- view content injected here -->
+      </main>
+    </div>
+  </div>
+
+  <div id="toast-root" class="toast-root"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
