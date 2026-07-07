@@ -141,9 +141,11 @@ async function renderAuditTab(content) {
   const logs = await api.get("/api/v1/admin/audit-logs");
   const card = el("div", { class: "card" }, [
     el("h3", {}, "Audit log"),
+    el("p", { class: "muted small" }, "Every entry shows who performed the action and when."),
     dataTable(
       [
         { header: "Date", render: (l) => formatDateTime(l.created_at) },
+        { header: "Actor", render: (l) => l.actor_name || (l.actor_user_id ? "Unknown user" : "System") },
         { header: "Action", render: (l) => l.action },
         { header: "Entity", render: (l) => `${l.entity_type}${l.entity_id ? ` #${l.entity_id.slice(0, 8)}` : ""}` },
         { header: "Details", render: (l) => l.details || "\u2014" },

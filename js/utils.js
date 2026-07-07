@@ -88,6 +88,35 @@ export function openModal(title, buildBody) {
   return close;
 }
 
+/**
+ * Returns an async resolve(userId) -> displayName function for showing
+ * "performed by" in tables. Only admins can list all users; for other
+ * roles this quietly falls back to showing a shortened ID instead of
+ * failing the whole page.
+ */
+export function createUserNameResolver(apiGet) {
+  let cache = null;
+  let attempted = false;
+
+  async function ensureLoaded() {
+    if (attempted) return;
+    attempted = true;
+    try {
+      const users = await apiGet("/api/v1/admin/users");
+      cache = new Map(users.map((u) => [u.id, u.full_name]));
+    } catch {
+      cache = null; // not an admin, or request failed - fall back silently
+    }
+  }
+
+  return async function resolve(userId) {
+    if (!userId) return "\u2014";
+    await ensureLoaded();
+    if (cache && cache.has(userId)) return cache.get(userId);
+    return `User #${userId.slice(0, 8)}`;
+  };
+}
+
 /** Simple yes/no confirmation modal. Returns a Promise<boolean>. */
 export function confirmDialog(message, confirmLabel = "Confirm", danger = true) {
   return new Promise((resolve) => {

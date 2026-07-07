@@ -242,6 +242,7 @@ function openDecisionForm(loan, closeParent, content, root) {
 function openDisburseForm(loan, closeParent, content, root) {
   openModal(`Disburse \u2014 ${loan.loan_number}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
+    const statusEl = el("p", { class: "muted small", hidden: true });
     const channelSelect = el("select", {}, [
       el("option", { value: "savings_account" }, "To savings account"),
       el("option", { value: "mobile_money" }, "Mobile money"),
@@ -249,39 +250,69 @@ function openDisburseForm(loan, closeParent, content, root) {
       el("option", { value: "cash" }, "Cash"),
     ]);
     const accountsHolder = el("div", { class: "field" });
+    const mobileMoneyHolder = el("div", { class: "field" });
 
-    async function loadAccounts() {
-      const accounts = await api.get(`/api/v1/savings/members/${loan.member_id}/accounts`);
-      if (channelSelect.value !== "savings_account") {
-        accountsHolder.innerHTML = "";
-        return;
-      }
+    async function loadChannelFields() {
       accountsHolder.innerHTML = "";
-      accountsHolder.appendChild(el("label", {}, "Disbursement savings account"));
-      if (!accounts.length) {
-        accountsHolder.appendChild(el("p", { class: "form-error" }, "This member has no savings accounts. Open one first, or choose a different channel."));
-        return;
+      mobileMoneyHolder.innerHTML = "";
+
+      if (channelSelect.value === "savings_account") {
+        const accounts = await api.get(`/api/v1/savings/members/${loan.member_id}/accounts`);
+        accountsHolder.appendChild(el("label", {}, "Disbursement savings account"));
+        if (!accounts.length) {
+          accountsHolder.appendChild(el("p", { class: "form-error" }, "This member has no savings accounts. Open one first, or choose a different channel."));
+          return;
+        }
+        accountsHolder.appendChild(
+          el("select", { id: "d-account" }, accounts.map((a) => el("option", { value: a.id }, `${a.account_number} \u2014 UGX ${formatMoney(a.balance)}`)))
+        );
+      } else if (channelSelect.value === "mobile_money") {
+        mobileMoneyHolder.appendChild(el("label", {}, "Mobile money number (optional \u2014 defaults to the member's number on file)"));
+        mobileMoneyHolder.appendChild(el("input", { id: "d-phone", type: "tel", placeholder: "e.g. 0700000000" }));
+        mobileMoneyHolder.appendChild(el("div", { class: "field-hint" }, "The loan stays \u201capproved\u201d until MarzPay confirms the payout succeeded \u2014 it won't show as active immediately."));
       }
-      accountsHolder.appendChild(
-        el("select", { id: "d-account" }, accounts.map((a) => el("option", { value: a.id }, `${a.account_number} \u2014 UGX ${formatMoney(a.balance)}`)))
-      );
     }
-    channelSelect.addEventListener("change", loadAccounts);
+    channelSelect.addEventListener("change", loadChannelFields);
+
+    const submitBtn = el("button", { type: "submit", class: "btn btn-primary" }, "Disburse");
 
     const form = el("form", {}, [
       el("div", { class: "field" }, [el("label", {}, "Channel"), channelSelect]),
       accountsHolder,
+      mobileMoneyHolder,
       errorEl,
+      statusEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
-        el("button", { type: "submit", class: "btn btn-primary" }, "Disburse"),
+        submitBtn,
       ]),
     ]);
-    loadAccounts();
+    loadChannelFields();
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorEl.hidden = true;
+
+      if (channelSelect.value === "mobile_money") {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Sending request\u2026";
+        try {
+          const phoneInput = form.querySelector("#d-phone");
+          const txn = await api.post(`/api/v1/mobile-money/loans/${loan.id}/disburse`, {
+            phone_number: phoneInput.value || null,
+          });
+          statusEl.hidden = false;
+          statusEl.textContent = "Disbursement request sent to MarzPay \u2014 waiting for confirmation\u2026";
+          pollDisbursementStatus(txn.id, closeFn, closeParent, statusEl, submitBtn, content, root);
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.hidden = false;
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Disburse";
+        }
+        return;
+      }
+
       try {
         const accountSelect = form.querySelector("#d-account");
         await api.post(`/api/v1/loans/applications/${loan.id}/disburse`, {
@@ -298,6 +329,33 @@ function openDisburseForm(loan, closeParent, content, root) {
     });
     return [form];
   });
+}
+
+async function pollDisbursementStatus(transactionId, closeFn, closeParent, statusEl, submitBtn, content, root) {
+  const maxAttempts = 20; // ~2 minutes at 6s intervals
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    try {
+      const txn = await api.get(`/api/v1/mobile-money/transactions/${transactionId}`);
+      if (txn.status === "completed") {
+        statusEl.textContent = "Confirmed \u2014 the loan is now active.";
+        showToast("Mobile money disbursement completed.", "success");
+        setTimeout(async () => { closeFn(); closeParent(); await renderTabContent(content, root); }, 1200);
+        return;
+      }
+      if (txn.status === "failed" || txn.status === "cancelled") {
+        statusEl.textContent = `Disbursement ${txn.status}: ${txn.failure_reason || "please try again."}`;
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Try again";
+        return;
+      }
+    } catch {
+      // transient network issue while polling - keep trying silently
+    }
+  }
+  statusEl.textContent = "Still waiting on confirmation. You can close this and check back on this loan shortly.";
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Close and check later";
 }
 
 function openRepaymentForm(loan, closeParent, content, root) {
