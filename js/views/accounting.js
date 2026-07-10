@@ -8,6 +8,7 @@ export async function renderAccounting(root) {
     tabButton("trial-balance", "Trial Balance", root),
     tabButton("accounts", "Chart of Accounts", root),
     tabButton("journal", "New Journal Entry", root),
+    tabButton("gl-settings", "GL Settings", root),
   ]);
   const content = el("div", {});
   mount(root, [tabs, content]);
@@ -22,6 +23,7 @@ async function renderTabContent(content, root) {
   mount(content, el("div", { class: "spinner" }));
   if (active === "accounts") await renderAccountsTab(content, root);
   else if (active === "journal") await renderJournalTab(content, root);
+  else if (active === "gl-settings") await renderGlSettingsTab(content, root);
   else await renderTrialBalanceTab(content);
 }
 
@@ -187,4 +189,67 @@ async function renderJournalTab(content, root) {
   });
 
   mount(content, el("div", { class: "card" }, [el("h3", {}, "New journal entry"), form]));
+}
+
+async function renderGlSettingsTab(content, root) {
+  const [settings, accounts] = await Promise.all([
+    api.get("/api/v1/accounting/gl-settings"),
+    api.get("/api/v1/accounting/accounts"),
+  ]);
+
+  if (!accounts.length) {
+    mount(content, el("div", { class: "card empty-state" }, [
+      el("h4", {}, "No chart of accounts yet"),
+      el("p", {}, "Create your cash, mobile money, and interest income accounts on the \u201cChart of Accounts\u201d tab first, then come back here to wire them up."),
+    ]));
+    return;
+  }
+
+  const errorEl = el("p", { class: "form-error", hidden: true });
+
+  function accountSelect(id, currentValue) {
+    return el("select", { id }, [
+      el("option", { value: "" }, "\u2014 Not configured \u2014"),
+      ...accounts.map((a) => el("option", { value: a.id, selected: a.id === currentValue }, `${a.code} \u2014 ${a.name}`)),
+    ]);
+  }
+
+  const cashSelect = accountSelect("gl-cash", settings.cash_account_id);
+  const mmSelect = accountSelect("gl-mm", settings.mobile_money_account_id);
+  const interestSelect = accountSelect("gl-interest", settings.interest_income_account_id);
+
+  const form = el("form", {}, [
+    el("div", { class: "field" }, [el("label", {}, "Cash / till account"), cashSelect,
+      el("div", { class: "field-hint" }, "Used for over-the-counter deposits, withdrawals, and cash loan disbursements/repayments.")]),
+    el("div", { class: "field" }, [el("label", {}, "Mobile money clearing account"), mmSelect,
+      el("div", { class: "field-hint" }, "Used for any transaction that moved through MarzPay.")]),
+    el("div", { class: "field" }, [el("label", {}, "Interest income account"), interestSelect,
+      el("div", { class: "field-hint" }, "Where loan interest is recognized as income when a repayment is applied.")]),
+    errorEl,
+    el("button", { type: "submit", class: "btn btn-primary" }, "Save GL settings"),
+  ]);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorEl.hidden = true;
+    try {
+      await api.patch("/api/v1/accounting/gl-settings", {
+        cash_account_id: cashSelect.value || null,
+        mobile_money_account_id: mmSelect.value || null,
+        interest_income_account_id: interestSelect.value || null,
+      });
+      showToast("GL settings saved.", "success");
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  });
+
+  mount(content, [
+    el("div", { class: "card" }, [
+      el("h3", {}, "General ledger settings"),
+      el("p", { class: "muted" }, "These are the shared accounts every automatic posting uses on the \u201cother side\u201d of a deposit, withdrawal, disbursement, or repayment. Each savings/loan product also needs its own liability/asset account set on the product itself (Savings \u2192 Products, Loans \u2192 Products)."),
+      form,
+    ]),
+  ]);
 }

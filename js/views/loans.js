@@ -27,11 +27,19 @@ async function renderTabContent(content, root) {
 }
 
 async function renderProductsTab(content, root) {
-  const products = await api.get("/api/v1/loans/products");
+  const [products, accounts] = await Promise.all([
+    api.get("/api/v1/loans/products"),
+    api.get("/api/v1/accounting/accounts").catch(() => []),
+  ]);
+  const accountName = (id) => {
+    const a = accounts.find((x) => x.id === id);
+    return a ? `${a.code} \u2014 ${a.name}` : null;
+  };
+
   const card = el("div", { class: "card" }, [
     el("div", { class: "card-header" }, [
       el("h3", {}, "Loan products"),
-      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root) }, "+ New product"),
+      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root, accounts) }, "+ New product"),
     ]),
     dataTable(
       [
@@ -40,6 +48,8 @@ async function renderProductsTab(content, root) {
         { header: "Max term", render: (p) => `${p.max_repayment_months} mo` },
         { header: "Max amount", className: "ledger", render: (p) => formatMoney(p.max_amount) },
         { header: "Guarantors", render: (p) => (p.requires_guarantors ? `Min ${p.min_guarantors}` : "Not required") },
+        { header: "GL account", render: (p) => accountName(p.gl_asset_account_id) || el("span", { class: "muted small" }, "Not set") },
+        { header: "", render: (p) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => openProductModal(content, root, accounts, p) }, "Edit") },
       ],
       products, "No loan products yet."
     ),
@@ -47,38 +57,68 @@ async function renderProductsTab(content, root) {
   mount(content, card);
 }
 
-function openProductModal(content, root) {
-  openModal("New loan product", (closeFn) => {
+function openProductModal(content, root, accounts, existing) {
+  const isEdit = Boolean(existing);
+  openModal(isEdit ? `Edit ${existing.name}` : "New loan product", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const requiresGuarantors = el("input", { type: "checkbox", id: "lp-requires", checked: true });
+    const requiresGuarantors = el("input", { type: "checkbox", id: "lp-requires", checked: isEdit ? undefined : true });
+
+    const glSelect = el(
+      "select", { id: "lp-gl" },
+      [
+        el("option", { value: "" }, "\u2014 Not set (won't post to the ledger) \u2014"),
+        ...accounts.map((a) => el("option", { value: a.id, selected: isEdit && a.id === existing.gl_asset_account_id }, `${a.code} \u2014 ${a.name}`)),
+      ]
+    );
+    const glField = el("div", { class: "field" }, [
+      el("label", {}, "GL asset account (loans receivable)"),
+      glSelect,
+      el("div", { class: "field-hint" }, "What members owe the SACCO on this product. Required for disbursements/repayments to post to the ledger."),
+    ]);
+
+    const fields = isEdit
+      ? [glField]
+      : [
+          el("div", { class: "field" }, [el("label", {}, "Name"), el("input", { id: "lp-name", required: true })]),
+          el("div", { class: "field-row" }, [
+            el("div", { class: "field" }, [el("label", {}, "Interest rate p.a. (%)"), el("input", { id: "lp-rate", type: "number", step: "0.01", required: true })]),
+            el("div", { class: "field" }, [el("label", {}, "Max repayment (months)"), el("input", { id: "lp-months", type: "number", required: true })]),
+          ]),
+          el("div", { class: "field" }, [el("label", {}, "Max amount"), el("input", { id: "lp-max", type: "number", required: true })]),
+          el("div", { class: "field", style: "display:flex;align-items:center;gap:8px" }, [requiresGuarantors, el("label", { style: "margin:0" }, "Requires guarantors")]),
+          el("div", { class: "field" }, [el("label", {}, "Minimum guarantors"), el("input", { id: "lp-min-g", type: "number", value: "1" })]),
+          glField,
+        ];
+
     const form = el("form", {}, [
-      el("div", { class: "field" }, [el("label", {}, "Name"), el("input", { id: "lp-name", required: true })]),
-      el("div", { class: "field-row" }, [
-        el("div", { class: "field" }, [el("label", {}, "Interest rate p.a. (%)"), el("input", { id: "lp-rate", type: "number", step: "0.01", required: true })]),
-        el("div", { class: "field" }, [el("label", {}, "Max repayment (months)"), el("input", { id: "lp-months", type: "number", required: true })]),
-      ]),
-      el("div", { class: "field" }, [el("label", {}, "Max amount"), el("input", { id: "lp-max", type: "number", required: true })]),
-      el("div", { class: "field", style: "display:flex;align-items:center;gap:8px" }, [requiresGuarantors, el("label", { style: "margin:0" }, "Requires guarantors")]),
-      el("div", { class: "field" }, [el("label", {}, "Minimum guarantors"), el("input", { id: "lp-min-g", type: "number", value: "1" })]),
+      ...fields,
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
-        el("button", { type: "submit", class: "btn btn-primary" }, "Create"),
+        el("button", { type: "submit", class: "btn btn-primary" }, isEdit ? "Save changes" : "Create"),
       ]),
     ]);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorEl.hidden = true;
       try {
-        await api.post("/api/v1/loans/products", {
-          name: form.querySelector("#lp-name").value,
-          interest_rate_annual: Number(form.querySelector("#lp-rate").value),
-          max_repayment_months: Number(form.querySelector("#lp-months").value),
-          max_amount: Number(form.querySelector("#lp-max").value),
-          requires_guarantors: requiresGuarantors.checked,
-          min_guarantors: Number(form.querySelector("#lp-min-g").value || 1),
-        });
-        showToast("Loan product created.", "success");
+        if (isEdit) {
+          await api.patch(`/api/v1/loans/products/${existing.id}`, {
+            gl_asset_account_id: glSelect.value || null,
+          });
+          showToast("Product updated.", "success");
+        } else {
+          await api.post("/api/v1/loans/products", {
+            name: form.querySelector("#lp-name").value,
+            interest_rate_annual: Number(form.querySelector("#lp-rate").value),
+            max_repayment_months: Number(form.querySelector("#lp-months").value),
+            max_amount: Number(form.querySelector("#lp-max").value),
+            requires_guarantors: requiresGuarantors.checked,
+            min_guarantors: Number(form.querySelector("#lp-min-g").value || 1),
+            gl_asset_account_id: glSelect.value || null,
+          });
+          showToast("Loan product created.", "success");
+        }
         closeFn();
         await renderTabContent(content, root);
       } catch (err) {
