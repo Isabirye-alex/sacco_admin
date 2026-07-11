@@ -535,3 +535,31 @@ tbody tr:hover { background: var(--pine-100); }
   margin-top: 6px;
   font-size: 13.5px;
 }
+
+/* ---------- Dashboard charts ---------- */
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.chart-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow-sm);
+}
+.chart-card h3 {
+  font-size: 15px;
+  margin-bottom: 10px;
+  color: var(--pine-900);
+}
+.chart-wrap {
+  width: 100%;
+  height: 320px;
+}
+@media (max-width: 860px) {
+  .charts-grid { grid-template-columns: 1fr; }
+  .chart-wrap { height: 280px; }
+}
