@@ -1,5 +1,7 @@
 import { api } from "../api.js";
-import { el, mount, formatMoney, titleCase, dataTable, openModal, showToast, memberPicker } from "../utils.js";
+import {
+  el, mount, formatMoney, titleCase, dataTable, openModal, showToast, memberPicker,
+} from "../utils.js";
 
 let active = "holdings";
 
@@ -26,17 +28,27 @@ async function renderTabContent(content, root) {
 }
 
 async function renderProductsTab(content, root) {
-  const products = await api.get("/api/v1/shares/products");
+  const [products, accounts] = await Promise.all([
+    api.get("/api/v1/shares/products"),
+    api.get("/api/v1/accounting/accounts").catch(() => []),
+  ]);
+  const accountName = (id) => {
+    const a = accounts.find((x) => x.id === id);
+    return a ? `${a.code} — ${a.name}` : null;
+  };
+
   const card = el("div", { class: "card" }, [
     el("div", { class: "card-header" }, [
       el("h3", {}, "Share products"),
-      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root) }, "+ New product"),
+      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root, accounts) }, "+ New product"),
     ]),
     dataTable(
       [
         { header: "Name", render: (p) => p.name },
         { header: "Nominal value", className: "ledger", render: (p) => formatMoney(p.nominal_value) },
         { header: "Min. shares", render: (p) => p.min_shares_per_member },
+        { header: "GL account", render: (p) => accountName(p.gl_equity_account_id) || el("span", { class: "muted small" }, "Not set") },
+        { header: "", render: (p) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => openProductModal(content, root, accounts, p) }, "Edit") },
       ],
       products, "No share products yet."
     ),
@@ -44,29 +56,59 @@ async function renderProductsTab(content, root) {
   mount(content, card);
 }
 
-function openProductModal(content, root) {
-  openModal("New share product", (closeFn) => {
+function openProductModal(content, root, accounts, existing) {
+  const isEdit = Boolean(existing);
+  openModal(isEdit ? `Edit ${existing.name}` : "New share product", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
+
+    const glSelect = el(
+      "select", { id: "sp-gl" },
+      [
+        el("option", { value: "" }, "\u2014 Not set (won't post to the ledger) \u2014"),
+        ...accounts.map((a) => el("option", { value: a.id, selected: isEdit && a.id === existing.gl_equity_account_id }, `${a.code} \u2014 ${a.name}`)),
+      ]
+    );
+    const glField = el("div", { class: "field" }, [
+      el("label", {}, "GL equity account (share capital)"),
+      glSelect,
+      el("div", { class: "field-hint" }, "The SACCO's obligation to members for this share class. Required for dividend payouts and share transactions to post to the ledger."),
+    ]);
+
+    const fields = isEdit
+      ? [glField]
+      : [
+          el("div", { class: "field" }, [el("label", {}, "Name"), el("input", { id: "sp-name", required: true })]),
+          el("div", { class: "field" }, [el("label", {}, "Nominal value per share"), el("input", { id: "sp-value", type: "number", required: true })]),
+          el("div", { class: "field" }, [el("label", {}, "Minimum shares per member"), el("input", { id: "sp-min", type: "number", value: "1" })]),
+          glField,
+        ];
+
     const form = el("form", {}, [
-      el("div", { class: "field" }, [el("label", {}, "Name"), el("input", { id: "sp-name", required: true })]),
-      el("div", { class: "field" }, [el("label", {}, "Nominal value per share"), el("input", { id: "sp-value", type: "number", required: true })]),
-      el("div", { class: "field" }, [el("label", {}, "Minimum shares per member"), el("input", { id: "sp-min", type: "number", value: "1" })]),
+      ...fields,
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
-        el("button", { type: "submit", class: "btn btn-primary" }, "Create"),
+        el("button", { type: "submit", class: "btn btn-primary" }, isEdit ? "Save changes" : "Create"),
       ]),
     ]);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorEl.hidden = true;
       try {
-        await api.post("/api/v1/shares/products", {
-          name: form.querySelector("#sp-name").value,
-          nominal_value: Number(form.querySelector("#sp-value").value),
-          min_shares_per_member: Number(form.querySelector("#sp-min").value || 1),
-        });
-        showToast("Share product created.", "success");
+        if (isEdit) {
+          await api.patch(`/api/v1/shares/products/${existing.id}`, {
+            gl_equity_account_id: glSelect.value || null,
+          });
+          showToast("Product updated.", "success");
+        } else {
+          await api.post("/api/v1/shares/products", {
+            name: form.querySelector("#sp-name").value,
+            nominal_value: Number(form.querySelector("#sp-value").value),
+            min_shares_per_member: Number(form.querySelector("#sp-min").value || 1),
+            gl_equity_account_id: glSelect.value || null,
+          });
+          showToast("Share product created.", "success");
+        }
         closeFn();
         await renderTabContent(content, root);
       } catch (err) {
