@@ -6,9 +6,11 @@ let active = "trial-balance";
 export async function renderAccounting(root) {
   const tabs = el("div", { class: "tabs" }, [
     tabButton("trial-balance", "Trial Balance", root),
-    tabButton("accounts", "Chart of Accounts", root),
+    tabButton("accounts", "Chart of Accounts Tree", root),
     tabButton("journal", "New Journal Entry", root),
-    tabButton("gl-settings", "GL Settings", root),
+    tabButton("dividends", "Dividend Calculator", root),
+    tabButton("vendors", "Vendor Management", root),
+    tabButton("gl-settings", "GL Settings", root)
   ]);
   const content = el("div", {});
   mount(root, [tabs, content]);
@@ -23,6 +25,8 @@ async function renderTabContent(content, root) {
   mount(content, el("div", { class: "spinner" }));
   if (active === "accounts") await renderAccountsTab(content, root);
   else if (active === "journal") await renderJournalTab(content, root);
+  else if (active === "dividends") await renderDividendsTab(content, root);
+  else if (active === "vendors") await renderVendorsTab(content, root);
   else if (active === "gl-settings") await renderGlSettingsTab(content, root);
   else await renderTrialBalanceTab(content);
 }
@@ -36,8 +40,8 @@ async function renderTrialBalanceTab(content) {
     [
       { header: "Code", render: (l) => l.account_code },
       { header: "Account", render: (l) => l.account_name },
-      { header: "Debit", className: "ledger", render: (l) => formatMoney(l.debit) },
-      { header: "Credit", className: "ledger", render: (l) => formatMoney(l.credit) },
+      { header: "Debit", className: "ledger", render: (l) => `UGX ${formatMoney(l.debit)}` },
+      { header: "Credit", className: "ledger", render: (l) => `UGX ${formatMoney(l.credit)}` },
     ],
     lines, "No posted journal activity yet."
   );
@@ -52,23 +56,41 @@ async function renderTrialBalanceTab(content) {
   ]));
 }
 
+// 1. Chart of Accounts Tree View
 async function renderAccountsTab(content, root) {
   const accounts = await api.get("/api/v1/accounting/accounts");
-  const card = el("div", { class: "card" }, [
-    el("div", { class: "card-header" }, [
-      el("h3", {}, "Chart of accounts"),
-      el("button", { class: "btn btn-primary btn-sm", onclick: () => openAccountModal(content, root) }, "+ New account"),
-    ]),
-    dataTable(
-      [
-        { header: "Code", render: (a) => a.code },
-        { header: "Name", render: (a) => a.name },
-        { header: "Type", render: (a) => titleCase(a.account_type) },
-      ],
-      accounts, "No accounts defined yet."
-    ),
+  
+  const header = el("div", { class: "card-header" }, [
+    el("h3", {}, "Chart of Accounts Tree View"),
+    el("button", { class: "btn btn-primary btn-sm", onclick: () => openAccountModal(content, root) }, "+ New Account"),
   ]);
-  mount(content, card);
+
+  // Group accounts by type for tree presentation
+  const types = ["asset", "liability", "equity", "income", "expense"];
+  const grouped = {};
+  types.forEach(t => { grouped[t] = accounts.filter(a => a.account_type === t); });
+
+  const treeContent = el("div", { style: "margin-top: 15px;" }, 
+    types.map(t => {
+      const children = grouped[t] || [];
+      return el("div", { class: "card", style: "margin-bottom: 12px; border-left: 4px solid var(--pine-600);" }, [
+        el("div", { style: "font-weight: bold; font-size: 15px; color: var(--pine-900); display: flex; align-items: center; gap: 8px;" }, [
+          el("span", {}, "📁"),
+          el("span", {}, `${titleCase(t)} Accounts (${children.length})`)
+        ]),
+        children.length 
+          ? el("ul", { style: "list-style: none; padding-left: 20px; margin-top: 8px; margin-bottom: 0;" }, 
+              children.map(a => el("li", { style: "padding: 6px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between;" }, [
+                el("span", {}, `${a.code} — ${a.name}`),
+                el("span", { class: "muted small" }, titleCase(a.account_type))
+              ]))
+            )
+          : el("div", { class: "muted small", style: "padding-left: 20px; margin-top: 5px;" }, "No accounts registered under this classification.")
+      ]);
+    })
+  );
+
+  mount(content, [header, treeContent]);
 }
 
 function openAccountModal(content, root) {
@@ -108,12 +130,13 @@ function openAccountModal(content, root) {
   });
 }
 
+// 2. Journal Entry Builder
 async function renderJournalTab(content, root) {
   const accounts = await api.get("/api/v1/accounting/accounts");
   if (!accounts.length) {
     mount(content, el("div", { class: "card empty-state" }, [
       el("h4", {}, "No chart of accounts yet"),
-      el("p", {}, "Create at least two accounts on the \u201cChart of Accounts\u201d tab before posting a journal entry."),
+      el("p", {}, "Create at least two accounts on the Chart of Accounts tab before posting a journal entry."),
     ]));
     return;
   }
@@ -124,15 +147,15 @@ async function renderJournalTab(content, root) {
   const balanceIndicator = el("p", { class: "muted small" });
 
   function accountOptions() {
-    return accounts.map((a) => el("option", { value: a.id }, `${a.code} \u2014 ${a.name}`));
+    return accounts.map((a) => el("option", { value: a.id }, `${a.code} — ${a.name}`));
   }
 
   function addLine() {
-    const row = el("div", { class: "je-line-row" }, [
-      el("select", { class: "je-account" }, accountOptions()),
-      el("input", { class: "je-debit", type: "number", placeholder: "Debit", step: "0.01", oninput: updateBalance }),
-      el("input", { class: "je-credit", type: "number", placeholder: "Credit", step: "0.01", oninput: updateBalance }),
-      el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: () => { row.remove(); updateBalance(); } }, "\u2715"),
+    const row = el("div", { class: "je-line-row", style: "display: flex; gap: 8px; margin-bottom: 8px; align-items: center;" }, [
+      el("select", { class: "je-account", style: "flex: 2;" }, accountOptions()),
+      el("input", { class: "je-debit", type: "number", placeholder: "Debit", step: "0.01", style: "flex: 1;", oninput: updateBalance }),
+      el("input", { class: "je-credit", type: "number", placeholder: "Credit", step: "0.01", style: "flex: 1;", oninput: updateBalance }),
+      el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: () => { row.remove(); updateBalance(); } }, "✕"),
     ]);
     linesHolder.appendChild(row);
     updateBalance();
@@ -146,7 +169,7 @@ async function renderJournalTab(content, root) {
       credit += Number(r.querySelector(".je-credit").value || 0);
     });
     const balanced = debit === credit && debit > 0;
-    balanceIndicator.textContent = `Debit: UGX ${formatMoney(debit)}  \u00b7  Credit: UGX ${formatMoney(credit)}  ${balanced ? "\u2713 Balanced" : "\u2014 Not yet balanced"}`;
+    balanceIndicator.textContent = `Debit: UGX ${formatMoney(debit)}  ·  Credit: UGX ${formatMoney(credit)}  ${balanced ? "✓ Balanced" : "— Not yet balanced"}`;
     balanceIndicator.style.color = balanced ? "var(--pine-700)" : "var(--warn)";
   }
 
@@ -191,6 +214,197 @@ async function renderJournalTab(content, root) {
   mount(content, el("div", { class: "card" }, [el("h3", {}, "New journal entry"), form]));
 }
 
+// 3. Calculate Dividends script runner
+async function renderDividendsTab(content, root) {
+  const errorEl = el("p", { class: "form-error", hidden: true });
+  const resultHolder = el("div", { style: "margin-top:16px" });
+
+  const yearInput = el("input", { id: "dv-year", placeholder: "e.g. 2025", required: true });
+  const rateInput = el("input", { id: "dv-rate", type: "number", step: "0.0001", required: true });
+
+  const form = el("form", {}, [
+    el("div", { class: "field-row" }, [
+      el("div", { class: "field" }, [el("label", {}, "Financial year"), yearInput]),
+      el("div", { class: "field" }, [el("label", {}, "Dividend Rate (UGX per Share Weight)"), rateInput]),
+    ]),
+    errorEl,
+    el("button", { type: "submit", class: "btn btn-primary" }, "Run Dividend Calculations"),
+  ]);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorEl.hidden = true;
+    try {
+      const result = await api.post("/api/v1/shares/dividends/declare", {
+        financial_year: yearInput.value,
+        rate_per_share: Number(rateInput.value),
+      });
+      showToast("Dividends computed and distributed.", "success");
+      mount(resultHolder, el("div", { class: "card", style: "border: 1px solid var(--pine-300)" }, [
+        el("h3", {}, "Dividend Calculation Summary"),
+        el("p", {}, `Calculations processed based on financial year weights:`),
+        infoRow("Total Disbursed Sum", `UGX ${formatMoney(result.total_amount)}`),
+        infoRow("Member Accounts Paid", `${result.members_paid} accounts`),
+        infoRow("Rate Applied", `UGX ${rateInput.value} per share unit`)
+      ]));
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  });
+
+  mount(content, [
+    el("div", { class: "card" }, [
+      el("h3", {}, "Calculate & Disburse Dividends"),
+      el("p", { class: "muted" }, "Declare and credit member share accounts automatically based on share ownership weights. Review weights before final submission."),
+      form,
+    ]),
+    resultHolder,
+  ]);
+}
+
+// Helper info row
+function infoRow(label, val) {
+  return el("div", { style: "display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line);" }, [
+    el("span", { class: "muted" }, label),
+    el("span", { style: "font-weight: 600" }, val)
+  ]);
+}
+
+// 4. Manage Vendors/Suppliers
+async function renderVendorsTab(content, root) {
+  // Load vendors from localStorage for state permanence
+  let vendors = JSON.parse(localStorage.getItem("sacco_vendors") || "[]");
+  if (!vendors.length) {
+    vendors = [
+      { id: "1", name: "Umeme Utilities Ltd", contact: "Billing Desk", phone: "0800185185", email: "billing@umeme.co.ug" },
+      { id: "2", name: "National Water & Sewerage Corp", contact: "NWSC Help", phone: "0800300900", email: "info@nwsc.co.ug" }
+    ];
+    localStorage.setItem("sacco_vendors", JSON.stringify(vendors));
+  }
+
+  const accounts = await api.get("/api/v1/accounting/accounts").catch(() => []);
+
+  const header = el("div", { class: "card-header" }, [
+    el("h3", {}, "Vendors & Suppliers Registry"),
+    el("button", { class: "btn btn-primary btn-sm", onclick: () => openVendorModal(content, root) }, "+ Register Vendor"),
+  ]);
+
+  const table = dataTable(
+    [
+      { header: "Vendor Name", render: (v) => v.name },
+      { header: "Contact Person", render: (v) => v.contact },
+      { header: "Phone", render: (v) => v.phone },
+      { header: "Email", render: (v) => v.email },
+      {
+        header: "",
+        render: (v) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => payVendorBillModal(v, accounts) }, "Pay Vendor Invoice")
+      }
+    ],
+    vendors
+  );
+
+  mount(content, [header, el("div", { class: "card" }, [table])]);
+}
+
+function openVendorModal(content, root) {
+  openModal("Register New Vendor", (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const nameInput = el("input", { required: true });
+    const contactInput = el("input");
+    const phoneInput = el("input");
+    const emailInput = el("input", { type: "email" });
+
+    const form = el("form", {}, [
+      el("div", { class: "field" }, [el("label", {}, "Vendor / Supplier Name"), nameInput]),
+      el("div", { class: "field-row" }, [
+        el("div", { class: "field" }, [el("label", {}, "Contact Person"), contactInput]),
+        el("div", { class: "field" }, [el("label", {}, "Phone"), phoneInput])
+      ]),
+      el("div", { class: "field" }, [el("label", {}, "Email Address"), emailInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Register Vendor")
+      ])
+    ]);
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const list = JSON.parse(localStorage.getItem("sacco_vendors") || "[]");
+      list.push({
+        id: Date.now().toString(),
+        name: nameInput.value,
+        contact: contactInput.value || "—",
+        phone: phoneInput.value || "—",
+        email: emailInput.value || "—"
+      });
+      localStorage.setItem("sacco_vendors", JSON.stringify(list));
+      showToast("Vendor registered.", "success");
+      closeFn();
+      renderVendorsTab(content, root);
+    });
+
+    return [form];
+  });
+}
+
+// Post matching double entry journal for vendor bill payout
+function payVendorBillModal(vendor, accounts) {
+  openModal(`Pay Vendor — ${vendor.name}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const amountInput = el("input", { type: "number", required: true, min: "1", placeholder: "Amount to disburse" });
+    const invoiceInput = el("input", { placeholder: "e.g. BILL-UMEME-4821" });
+
+    // Filter cash and expense accounts for simple selection
+    const assetAccounts = accounts.filter(a => a.account_type === "asset");
+    const expenseAccounts = accounts.filter(a => a.account_type === "expense");
+
+    const assetSelect = el("select", {}, assetAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
+    const expenseSelect = el("select", {}, expenseAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
+
+    const form = el("form", {}, [
+      el("p", { class: "muted" }, "Post invoice disbursement directly into the general ledger."),
+      el("div", { class: "field-row" }, [
+        el("div", { class: "field" }, [el("label", {}, "Expense Account (Debit)"), expenseSelect]),
+        el("div", { class: "field" }, [el("label", {}, "Asset Account (Credit)"), assetSelect])
+      ]),
+      el("div", { class: "field-row" }, [
+        el("div", { class: "field" }, [el("label", {}, "Payment Amount"), amountInput]),
+        el("div", { class: "field" }, [el("label", {}, "Invoice / Bill Number"), invoiceInput])
+      ]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Post Vendor Payment")
+      ])
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      const amt = Number(amountInput.value);
+      try {
+        await api.post("/api/v1/accounting/journal-entries", {
+          narrative: `Vendor Payout to ${vendor.name} (Invoice: ${invoiceInput.value || "OTC"})`,
+          lines: [
+            { account_id: expenseSelect.value, debit: amt, credit: 0 },
+            { account_id: assetSelect.value, debit: 0, credit: amt }
+          ]
+        });
+        showToast("Vendor payment posted to general ledger successfully.", "success");
+        closeFn();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+
+    return [form];
+  });
+}
+
+// 5. GL Settings Tab
 async function renderGlSettingsTab(content, root) {
   const [settings, accounts] = await Promise.all([
     api.get("/api/v1/accounting/gl-settings"),
@@ -200,7 +414,7 @@ async function renderGlSettingsTab(content, root) {
   if (!accounts.length) {
     mount(content, el("div", { class: "card empty-state" }, [
       el("h4", {}, "No chart of accounts yet"),
-      el("p", {}, "Create your cash, mobile money, and interest income accounts on the \u201cChart of Accounts\u201d tab first, then come back here to wire them up."),
+      el("p", {}, "Create your cash, mobile money, and interest income accounts first."),
     ]));
     return;
   }
@@ -209,8 +423,8 @@ async function renderGlSettingsTab(content, root) {
 
   function accountSelect(id, currentValue) {
     return el("select", { id }, [
-      el("option", { value: "" }, "\u2014 Not configured \u2014"),
-      ...accounts.map((a) => el("option", { value: a.id, selected: a.id === currentValue }, `${a.code} \u2014 ${a.name}`)),
+      el("option", { value: "" }, "— Not configured —"),
+      ...accounts.map((a) => el("option", { value: a.id, selected: a.id === currentValue }, `${a.code} — ${a.name}`)),
     ]);
   }
 
@@ -219,12 +433,9 @@ async function renderGlSettingsTab(content, root) {
   const interestSelect = accountSelect("gl-interest", settings.interest_income_account_id);
 
   const form = el("form", {}, [
-    el("div", { class: "field" }, [el("label", {}, "Cash / till account"), cashSelect,
-      el("div", { class: "field-hint" }, "Used for over-the-counter deposits, withdrawals, and cash loan disbursements/repayments.")]),
-    el("div", { class: "field" }, [el("label", {}, "Mobile money clearing account"), mmSelect,
-      el("div", { class: "field-hint" }, "Used for any transaction that moved through MarzPay.")]),
-    el("div", { class: "field" }, [el("label", {}, "Interest income account"), interestSelect,
-      el("div", { class: "field-hint" }, "Where loan interest is recognized as income when a repayment is applied.")]),
+    el("div", { class: "field" }, [el("label", {}, "Cash / till account"), cashSelect]),
+    el("div", { class: "field" }, [el("label", {}, "Mobile money clearing account"), mmSelect]),
+    el("div", { class: "field" }, [el("label", {}, "Interest income account"), interestSelect]),
     errorEl,
     el("button", { type: "submit", class: "btn btn-primary" }, "Save GL settings"),
   ]);
@@ -248,7 +459,6 @@ async function renderGlSettingsTab(content, root) {
   mount(content, [
     el("div", { class: "card" }, [
       el("h3", {}, "General ledger settings"),
-      el("p", { class: "muted" }, "These are the shared accounts every automatic posting uses on the \u201cother side\u201d of a deposit, withdrawal, disbursement, or repayment. Each savings/loan product also needs its own liability/asset account set on the product itself (Savings \u2192 Products, Loans \u2192 Products)."),
       form,
     ]),
   ]);

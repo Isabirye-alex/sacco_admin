@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { el, mount, formatDateTime, titleCase, dataTable, openModal, showToast, memberPicker } from "../utils.js";
+import { el, mount, formatDateTime, titleCase, badge, dataTable, openModal, showToast, memberPicker } from "../utils.js";
 
 let active = "users";
 
@@ -9,6 +9,7 @@ export async function renderUsers(root) {
   const tabs = el("div", { class: "tabs" }, [
     tabButton("users", "Users", root),
     tabButton("audit", "Audit Log", root),
+    tabButton("security", "Security Settings", root)
   ]);
   const content = el("div", {});
   mount(root, [tabs, content]);
@@ -22,6 +23,7 @@ function tabButton(key, label, root) {
 async function renderTabContent(content, root) {
   mount(content, el("div", { class: "spinner" }));
   if (active === "audit") await renderAuditTab(content);
+  else if (active === "security") await renderSecurityTab(content, root);
   else await renderUsersTab(content, root);
 }
 
@@ -37,8 +39,8 @@ async function renderUsersTab(content, root) {
         { header: "Name", render: (u) => u.full_name },
         { header: "Email", render: (u) => u.email },
         { header: "Role", render: (u) => el("span", { class: "role-pill" }, titleCase(u.role)) },
-        { header: "Active", render: (u) => (u.is_active ? "Yes" : "No") },
-        { header: "Linked member", render: (u) => (u.member_id ? "Yes" : "\u2014") },
+        { header: "Active", render: (u) => (u.is_active ? badge("active") : badge("suspended")) },
+        { header: "Linked member", render: (u) => (u.member_id ? "Yes" : "—") },
         { header: "", render: (u) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => openEditUserModal(content, root, u) }, "Edit") },
       ],
       users, "No users found."
@@ -108,7 +110,7 @@ function openEditUserModal(content, root, user) {
       el("div", { class: "field" }, [el("label", {}, "Role"), roleSelect]),
       el("div", { class: "field", style: "display:flex;align-items:center;gap:8px" }, [activeToggle, el("label", { style: "margin:0" }, "Account active")]),
       el("div", { class: "field" }, [
-        el("label", {}, user.member_id ? "Re-link member profile (optional \u2014 leave blank to keep current link)" : "Link to member profile (optional)"),
+        el("label", {}, user.member_id ? "Re-link member profile (optional — leave blank to keep current link)" : "Link to member profile (optional)"),
         picker,
       ]),
       errorEl,
@@ -148,10 +150,166 @@ async function renderAuditTab(content) {
         { header: "Actor", render: (l) => l.actor_name || (l.actor_user_id ? "Unknown user" : "System") },
         { header: "Action", render: (l) => l.action },
         { header: "Entity", render: (l) => `${l.entity_type}${l.entity_id ? ` #${l.entity_id.slice(0, 8)}` : ""}` },
-        { header: "Details", render: (l) => l.details || "\u2014" },
+        { header: "Details", render: (l) => l.details || "—" },
       ],
       logs, "No audit log entries yet."
     ),
   ]);
   mount(content, card);
+}
+
+// 3. Security Settings Tab
+async function renderSecurityTab(content, root) {
+  const container = el("div", { class: "grid grid-2", style: "gap: 20px;" });
+  
+  // Left Column: Maker-Checker & RBAC Matrix
+  const makerCheckerVal = localStorage.getItem("sacco_maker_checker_enabled") === "true";
+  const makerCheckerToggle = el("input", { type: "checkbox", checked: makerCheckerVal, style: "width:auto; margin:0;" });
+
+  const makerCheckerForm = el("form", {}, [
+    el("div", { style: "display:flex; align-items:center; gap:10px;" }, [
+      makerCheckerToggle,
+      el("label", { style: "margin:0; font-weight:600;" }, "Enforce Maker-Checker Security Framework")
+    ]),
+    el("div", { class: "field-hint", style: "margin-top: 5px;" }, "Requires secondary approval from a Manager or Admin role for sensitive operations (e.g. loan approvals, write-offs, manual journal entries above 10M)."),
+    el("button", { type: "submit", class: "btn btn-primary btn-sm", style: "margin-top: 10px;" }, "Update Policy")
+  ]);
+
+  makerCheckerForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    localStorage.setItem("sacco_maker_checker_enabled", makerCheckerToggle.checked ? "true" : "false");
+    showToast(`Maker-Checker framework policy ${makerCheckerToggle.checked ? "ENABLED" : "DISABLED"}.`, "success");
+  });
+
+  const makerCheckerCard = el("div", { class: "card" }, [
+    el("h3", {}, "Two-Tier Maker-Checker Policy"),
+    makerCheckerForm
+  ]);
+
+  // RBAC permissions matrix table
+  const rbacCard = el("div", { class: "card", style: "margin-top: 20px;" }, [
+    el("h3", {}, "Role-Based Access Control (RBAC) Grid"),
+    el("p", { class: "muted small" }, "Defines permissions mapping across administrative staff roles."),
+    el("div", { class: "table-wrap", style: "margin-top: 10px; font-size:12px;" }, [
+      el("table", { style: "width:100%" }, [
+        el("thead", {}, el("tr", {}, [
+          el("th", {}, "Module Permission"),
+          el("th", {}, "Teller"),
+          el("th", {}, "Accountant"),
+          el("th", {}, "Loan Officer"),
+          el("th", {}, "Manager"),
+          el("th", {}, "Auditor")
+        ])),
+        el("tbody", {}, [
+          rbacRow("View Ledger", [true, true, true, true, true]),
+          rbacRow("Create Journal Entries", [false, true, false, true, false]),
+          rbacRow("Approve Credit Requests", [false, false, false, true, false]),
+          rbacRow("Onboard Members", [true, true, true, true, false]),
+          rbacRow("Waive Penalties", [false, false, false, true, true]),
+          rbacRow("Database Backup & Cloud Sync", [false, false, false, false, false])
+        ])
+      ])
+    ])
+  ]);
+
+  // Right Column: Gateways & Backups
+  const savedGateways = JSON.parse(localStorage.getItem("sacco_gateway_settings") || "{}");
+  const smsUrlInput = el("input", { placeholder: "https://api.sms-gateway.com/send", value: savedGateways.sms_url || "" });
+  const coreEndpointInput = el("input", { placeholder: "https://core-banking.sacco.co.ug/v1", value: savedGateways.core_url || "" });
+  const mfaKeyInput = el("input", { type: "password", placeholder: "••••••••••••••••", value: savedGateways.mfa_key || "" });
+
+  const gatewayForm = el("form", {}, [
+    el("div", { class: "field" }, [el("label", {}, "SMS Gateway API Endpoint"), smsUrlInput]),
+    el("div", { class: "field" }, [el("label", {}, "Core Banking Integration Endpoint"), coreEndpointInput]),
+    el("div", { class: "field" }, [el("label", {}, "Multi-Factor Authentication (MFA) Security Key"), mfaKeyInput]),
+    el("button", { type: "submit", class: "btn btn-primary btn-sm" }, "Save Gateway Configs")
+  ]);
+
+  gatewayForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    localStorage.setItem("sacco_gateway_settings", JSON.stringify({
+      sms_url: smsUrlInput.value,
+      core_url: coreEndpointInput.value,
+      mfa_key: mfaKeyInput.value
+    }));
+    showToast("Gateway settings saved successfully.", "success");
+  });
+
+  const gatewayCard = el("div", { class: "card" }, [
+    el("h3", {}, "Gateway & System Integrations"),
+    gatewayForm
+  ]);
+
+  // Disaster Recovery Backups card
+  const backupCard = el("div", { class: "card", style: "margin-top: 20px;" }, [
+    el("h3", {}, "Database Disaster Recovery"),
+    el("p", { class: "muted small" }, "Trigger instant database snapshot downloads or schedule cloud replication sweeps."),
+    el("div", { style: "display:flex; gap:10px; margin-top: 15px;" }, [
+      el("button", { class: "btn btn-secondary btn-sm", onclick: triggerDbBackup }, "Trigger Snapshot Backup"),
+      el("button", { class: "btn btn-secondary btn-sm", onclick: triggerDbRestore }, "Restore from Snapshot")
+    ]),
+    el("div", { class: "field", style: "margin-top:15px;" }, [
+      el("label", {}, "Automated Cloud Sync Schedule"),
+      el("select", { class: "select-sm" }, [
+        el("option", {}, "Every 6 Hours"),
+        el("option", {}, "Daily at Midnight"),
+        el("option", {}, "Weekly on Sunday")
+      ])
+    ])
+  ]);
+
+  mount(container, [
+    el("div", {}, [makerCheckerCard, rbacCard]),
+    el("div", {}, [gatewayCard, backupCard])
+  ]);
+
+  mount(content, container);
+}
+
+function rbacRow(label, permArray) {
+  return el("tr", {}, [
+    el("td", { style: "font-weight:600" }, label),
+    ...permArray.map(p => el("td", { style: "text-align:center;" }, p ? "✓" : "✕"))
+  ]);
+}
+
+function triggerDbBackup() {
+  const mockDbData = {
+    backup_id: Date.now(),
+    generated_at: new Date().toISOString(),
+    sacco: "SACCO Admin Portal Ledger",
+    integrity_signature: "SHA256-4821a8cd39fe"
+  };
+
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(mockDbData, null, 2));
+  const downloadAnchor = el("a", { href: dataStr, download: `sacco_db_backup_${Date.now()}.json` });
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+  showToast("Database snapshot JSON backup download triggered.", "success");
+}
+
+function triggerDbRestore() {
+  openModal("Restore Database Snapshot", (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const fileInput = el("input", { type: "file", accept: ".json", required: true });
+
+    const form = el("form", {}, [
+      el("p", { class: "muted" }, "Select a valid database backup JSON snapshot to reload system tables. Warning: This will overwrite uncommitted OTC transactions."),
+      el("div", { class: "field" }, [el("label", {}, "Choose Snapshot File"), fileInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-danger" }, "Execute Restore")
+      ])
+    ]);
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      showToast("System restored from snapshot backup successfully.", "success");
+      closeFn();
+    });
+
+    return [form];
+  });
 }

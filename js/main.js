@@ -11,6 +11,7 @@ import { renderPayroll } from "./views/payroll.js";
 import { renderShares } from "./views/shares.js";
 import { renderGroups } from "./views/groups.js";
 import { renderNotifications } from "./views/notifications.js";
+import { renderReports } from "./views/reports.js";
 import { renderRisk } from "./views/risk.js";
 import { renderUsers } from "./views/users.js";
 
@@ -23,6 +24,7 @@ registerRoute("/payroll", "HR & Payroll", renderPayroll);
 registerRoute("/shares", "Shares Management", renderShares);
 registerRoute("/groups", "Group Management", renderGroups);
 registerRoute("/notifications", "Notifications", renderNotifications);
+registerRoute("/reports", "Reports & Analytics", renderReports);
 registerRoute("/risk", "Risk & Compliance", renderRisk);
 registerRoute("/users", "Users & Audit", renderUsers);
 

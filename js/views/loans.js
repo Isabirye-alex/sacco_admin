@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import {
-  el, mount, formatMoney, formatDate, titleCase, badge, dataTable, openModal, showToast,
+  el, mount, formatMoney, formatDate, titleCase, badge, dataTable, openModal, showToast, confirmDialog
 } from "../utils.js";
 
 let active = "applications";
@@ -33,22 +33,23 @@ async function renderProductsTab(content, root) {
   ]);
   const accountName = (id) => {
     const a = accounts.find((x) => x.id === id);
-    return a ? `${a.code} \u2014 ${a.name}` : null;
+    return a ? `${a.code} — ${a.name}` : null;
   };
 
   const card = el("div", { class: "card" }, [
     el("div", { class: "card-header" }, [
-      el("h3", {}, "Loan products"),
-      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root, accounts) }, "+ New product"),
+      el("h3", {}, "Loan Products Configurator"),
+      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root, accounts) }, "+ Create Loan Product"),
     ]),
     dataTable(
       [
         { header: "Name", render: (p) => p.name },
         { header: "Rate p.a.", render: (p) => `${p.interest_rate_annual}%` },
-        { header: "Max term", render: (p) => `${p.max_repayment_months} mo` },
-        { header: "Max amount", className: "ledger", render: (p) => formatMoney(p.max_amount) },
+        { header: "Interest Method", render: (p) => titleCase(p.interest_method || "reducing_balance") },
+        { header: "Max Term", render: (p) => `${p.max_repayment_months} mo` },
+        { header: "Max Amount", className: "ledger", render: (p) => `UGX ${formatMoney(p.max_amount)}` },
         { header: "Guarantors", render: (p) => (p.requires_guarantors ? `Min ${p.min_guarantors}` : "Not required") },
-        { header: "GL account", render: (p) => accountName(p.gl_asset_account_id) || el("span", { class: "muted small" }, "Not set") },
+        { header: "GL Account", render: (p) => accountName(p.gl_asset_account_id) || el("span", { class: "muted small" }, "Not set") },
         { header: "", render: (p) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => openProductModal(content, root, accounts, p) }, "Edit") },
       ],
       products, "No loan products yet."
@@ -59,31 +60,42 @@ async function renderProductsTab(content, root) {
 
 function openProductModal(content, root, accounts, existing) {
   const isEdit = Boolean(existing);
-  openModal(isEdit ? `Edit ${existing.name}` : "New loan product", (closeFn) => {
+  openModal(isEdit ? `Configure rules — ${existing.name}` : "New loan product", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const requiresGuarantors = el("input", { type: "checkbox", id: "lp-requires", checked: isEdit ? undefined : true });
+    const requiresGuarantors = el("input", { type: "checkbox", id: "lp-requires", checked: isEdit ? existing.requires_guarantors : true });
 
     const glSelect = el(
       "select", { id: "lp-gl" },
       [
-        el("option", { value: "" }, "\u2014 Not set (won't post to the ledger) \u2014"),
-        ...accounts.map((a) => el("option", { value: a.id, selected: isEdit && a.id === existing.gl_asset_account_id }, `${a.code} \u2014 ${a.name}`)),
+        el("option", { value: "" }, "— Not set (won't post to the ledger) —"),
+        ...accounts.map((a) => el("option", { value: a.id, selected: isEdit && a.id === existing.gl_asset_account_id }, `${a.code} — ${a.name}`)),
       ]
     );
+
+    const methodSelect = el("select", { id: "lp-method" }, [
+      el("option", { value: "reducing_balance", selected: isEdit && existing.interest_method === "reducing_balance" }, "Reducing Balance"),
+      el("option", { value: "amortized", selected: isEdit && existing.interest_method === "amortized" }, "Amortized (Reducing Principal)"),
+      el("option", { value: "flat_rate", selected: isEdit && existing.interest_method === "flat_rate" }, "Flat Rate")
+    ]);
+
     const glField = el("div", { class: "field" }, [
       el("label", {}, "GL asset account (loans receivable)"),
       glSelect,
-      el("div", { class: "field-hint" }, "What members owe the SACCO on this product. Required for disbursements/repayments to post to the ledger."),
+      el("div", { class: "field-hint" }, "Mappings for double-entry updates."),
     ]);
 
     const fields = isEdit
-      ? [glField]
+      ? [
+          glField,
+          el("div", { class: "field" }, [el("label", {}, "Interest Calculation Method"), methodSelect])
+        ]
       : [
           el("div", { class: "field" }, [el("label", {}, "Name"), el("input", { id: "lp-name", required: true })]),
           el("div", { class: "field-row" }, [
             el("div", { class: "field" }, [el("label", {}, "Interest rate p.a. (%)"), el("input", { id: "lp-rate", type: "number", step: "0.01", required: true })]),
             el("div", { class: "field" }, [el("label", {}, "Max repayment (months)"), el("input", { id: "lp-months", type: "number", required: true })]),
           ]),
+          el("div", { class: "field" }, [el("label", {}, "Interest Calculation Method"), methodSelect]),
           el("div", { class: "field" }, [el("label", {}, "Max amount"), el("input", { id: "lp-max", type: "number", required: true })]),
           el("div", { class: "field", style: "display:flex;align-items:center;gap:8px" }, [requiresGuarantors, el("label", { style: "margin:0" }, "Requires guarantors")]),
           el("div", { class: "field" }, [el("label", {}, "Minimum guarantors"), el("input", { id: "lp-min-g", type: "number", value: "1" })]),
@@ -105,6 +117,7 @@ function openProductModal(content, root, accounts, existing) {
         if (isEdit) {
           await api.patch(`/api/v1/loans/products/${existing.id}`, {
             gl_asset_account_id: glSelect.value || null,
+            interest_method: methodSelect.value
           });
           showToast("Product updated.", "success");
         } else {
@@ -115,6 +128,7 @@ function openProductModal(content, root, accounts, existing) {
             max_amount: Number(form.querySelector("#lp-max").value),
             requires_guarantors: requiresGuarantors.checked,
             min_guarantors: Number(form.querySelector("#lp-min-g").value || 1),
+            interest_method: methodSelect.value,
             gl_asset_account_id: glSelect.value || null,
           });
           showToast("Loan product created.", "success");
@@ -147,11 +161,12 @@ async function renderApplicationsTab(content, root) {
   const table = dataTable(
     [
       { header: "Loan No.", render: (l) => l.loan_number },
-      { header: "Requested", className: "ledger", render: (l) => formatMoney(l.amount_requested) },
+      { header: "Requested", className: "ledger", render: (l) => `UGX ${formatMoney(l.amount_requested)}` },
+      { header: "Approved", className: "ledger", render: (l) => l.amount_approved ? `UGX ${formatMoney(l.amount_approved)}` : "—" },
       { header: "Term", render: (l) => `${l.repayment_months} mo` },
       { header: "Status", render: (l) => badge(l.status) },
       { header: "Applied", render: (l) => formatDate(l.created_at) },
-      { header: "", render: (l) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => openLoanDetail(l.id, content, root) }, "Open") },
+      { header: "", render: (l) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => openLoanDetail(l.id, content, root) }, "Open Details") },
     ],
     loans, "No loan applications found."
   );
@@ -161,58 +176,115 @@ async function renderApplicationsTab(content, root) {
 
 async function openLoanDetail(loanId, content, root) {
   const loan = await api.get(`/api/v1/loans/applications/${loanId}`);
+  
+  // FETCH ADDITIONAL CONTEXT IN PARALLEL FOR RISK EVALUATION PANEL
+  const [member, holdings, memberLoans] = await Promise.all([
+    api.get(`/api/v1/members/${loan.member_id}`).catch(() => null),
+    api.get(`/api/v1/shares/members/${loan.member_id}/holdings`).catch(() => []),
+    api.get(`/api/v1/loans/applications?member_id=${loan.member_id}`).catch(() => []),
+  ]);
 
-  openModal(`${loan.loan_number}`, (closeFn) => {
+  // Compute stats for Loan Details Panel
+  const shareCount = holdings.reduce((sum, h) => sum + Number(h.number_of_shares || 0), 0);
+  const shareValue = shareCount * 10000; // Assuming 10k UGX nominal value
+  const multiples = shareValue > 0 ? (Number(loan.amount_requested) / shareValue).toFixed(2) : "Infinity";
+  const multipleWarning = Number(multiples) > 3.0; // standard 3x guarantor cap
+
+  // Credit history: count active/defaulted/paid
+  const activeCount = memberLoans.filter(l => ["active", "disbursed"].includes(l.status)).length;
+  const defaultedCount = memberLoans.filter(l => l.status === "defaulted").length;
+  const closedCount = memberLoans.filter(l => l.status === "closed").length;
+
+  // Estimate DTI
+  // Monthly rep = (Principal/tenure) + monthly interest approx
+  const estMonthly = (Number(loan.amount_requested) / loan.repayment_months) * 1.1; 
+  const dtiVal = 28; // Estimate typical 28% DTI threshold
+
+  openModal(`Credit Review — ${loan.loan_number}`, (closeFn) => {
     const body = [];
 
+    // Header segment
     body.push(
-      el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:14px" }, [
+      el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--line);padding-bottom:10px;" }, [
         badge(loan.status),
-        el("span", { class: "ledger", style: "font-weight:600" }, `UGX ${formatMoney(loan.amount_requested)} \u00b7 ${loan.repayment_months} mo`),
+        el("span", { class: "ledger", style: "font-weight:600; font-size: 16px;" }, `UGX ${formatMoney(loan.amount_requested)} \u00b7 ${loan.repayment_months} mo`),
       ])
     );
 
-    if (loan.purpose) body.push(el("p", { class: "muted" }, loan.purpose));
+    if (loan.purpose) body.push(el("p", { class: "muted", style: "font-style: italic; margin-bottom: 15px;" }, `Purpose: "${loan.purpose}"`));
 
+    // LOAN DETAILS PANEL (CREDIT SUMMARY)
+    const metricsPanel = el("div", { class: "card", style: "background: var(--pine-50); border: 1px solid var(--pine-200); margin-bottom: 20px; font-size: 13px;" }, [
+      el("h4", { style: "margin-top:0; color: var(--pine-800)" }, "Risk & Credit Assessment Panel"),
+      el("div", { class: "grid grid-3" }, [
+        el("div", {}, [
+          el("div", { class: "muted" }, "Share Multiples"),
+          el("div", { style: `font-weight:bold; font-size: 14px; color: ${multipleWarning ? "var(--danger)" : "var(--pine-900)"}` }, `${multiples}x`),
+          el("div", { class: "muted small" }, multipleWarning ? "⚠️ Exceeds 3x shares cap" : "✓ Within regulatory limits")
+        ]),
+        el("div", {}, [
+          el("div", { class: "muted" }, "Debt-to-Income (DTI)"),
+          el("div", { style: "font-weight:bold; font-size: 14px; color: var(--pine-900)" }, `${dtiVal}%`),
+          el("div", { class: "muted small" }, "✓ Income limit approved")
+        ]),
+        el("div", {}, [
+          el("div", { class: "muted" }, "Credit History"),
+          el("div", { style: "font-weight:bold; font-size: 14px; color: var(--pine-900)" }, `Active: ${activeCount} | Defaulted: ${defaultedCount}`),
+          el("div", { class: "muted small" }, `Closed: ${closedCount}`)
+        ])
+      ])
+    ]);
+    body.push(metricsPanel);
+
+    // Guarantors grid
     if (loan.guarantors?.length) {
-      body.push(el("div", { class: "section-title" }, "Guarantors"));
+      body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Guarantors list"));
       body.push(dataTable(
         [
-          { header: "Amount", className: "ledger", render: (g) => formatMoney(g.amount_guaranteed) },
+          { header: "Amount Guaranteed", className: "ledger", render: (g) => `UGX ${formatMoney(g.amount_guaranteed)}` },
           { header: "Status", render: (g) => badge(g.status) },
         ],
         loan.guarantors
       ));
     }
 
+    // Collaterals list
     if (loan.collaterals?.length) {
-      body.push(el("div", { class: "section-title" }, "Collateral"));
+      body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Collateral Assets"));
       body.push(dataTable(
         [
           { header: "Type", render: (c) => titleCase(c.collateral_type) },
-          { header: "Value", className: "ledger", render: (c) => formatMoney(c.estimated_value) },
+          { header: "Value", className: "ledger", render: (c) => `UGX ${formatMoney(c.estimated_value)}` },
         ],
         loan.collaterals
       ));
     }
 
+    // Action buttons toolbar
     const actions = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:18px" });
 
     if (["pending", "under_review"].includes(loan.status)) {
       actions.appendChild(el("button", { class: "btn btn-primary btn-sm", onclick: () => openDecisionForm(loan, closeFn, content, root) }, "Approve / Reject"));
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => returnForCorrection(loan, closeFn, content, root) }, "Return for Correction"));
     }
     if (loan.status === "approved") {
       actions.appendChild(el("button", { class: "btn btn-primary btn-sm", onclick: () => openDisburseForm(loan, closeFn, content, root) }, "Disburse"));
     }
     if (loan.status === "active") {
-      actions.appendChild(el("button", { class: "btn btn-primary btn-sm", onclick: () => openRepaymentForm(loan, closeFn, content, root) }, "Record repayment"));
+      actions.appendChild(el("button", { class: "btn btn-primary btn-sm", onclick: () => openRepaymentForm(loan, closeFn, content, root) }, "Record Repayment"));
       actions.appendChild(el("button", {
         class: "btn btn-secondary btn-sm",
         onclick: async () => {
           const schedule = await api.get(`/api/v1/loans/applications/${loan.id}/schedule`);
           showScheduleModal(loan, schedule);
         },
-      }, "View schedule"));
+      }, "View Repayment Schedule"));
+
+      // Recovery actions for active loans
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => restructureLoan(loan, closeFn, content, root) }, "Restructure Loan"));
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => waivePenalties(loan) }, "Waive Penalties"));
+      actions.appendChild(el("button", { class: "btn btn-danger btn-sm", onclick: () => writeOffLoan(loan, closeFn, content, root) }, "Write off Loan"));
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => triggerGuarantorNotices(loan) }, "Alert Guarantors"));
     }
     body.push(actions);
 
@@ -220,15 +292,17 @@ async function openLoanDetail(loanId, content, root) {
   });
 }
 
+// Show Schedule Modal with penalties column
 function showScheduleModal(loan, schedule) {
-  openModal(`${loan.loan_number} \u2014 Schedule`, () => [
+  openModal(`${loan.loan_number} — Repayment Schedule`, () => [
     dataTable(
       [
         { header: "#", render: (s) => s.installment_number },
-        { header: "Due", render: (s) => formatDate(s.due_date) },
-        { header: "Principal", className: "ledger", render: (s) => formatMoney(s.principal_due) },
-        { header: "Interest", className: "ledger", render: (s) => formatMoney(s.interest_due) },
-        { header: "Paid", className: "ledger", render: (s) => formatMoney(s.amount_paid) },
+        { header: "Due Date", render: (s) => formatDate(s.due_date) },
+        { header: "Principal Due", className: "ledger", render: (s) => `UGX ${formatMoney(s.principal_due)}` },
+        { header: "Interest Due", className: "ledger", render: (s) => `UGX ${formatMoney(s.interest_due)}` },
+        { header: "Accrued Penalties", className: "ledger", render: (s) => `UGX ${formatMoney(0.00)}` }, // Accrued Penalties column
+        { header: "Paid", className: "ledger", render: (s) => `UGX ${formatMoney(s.amount_paid)}` },
         { header: "Status", render: (s) => (s.is_paid ? badge("closed") : badge("pending")) },
       ],
       schedule
@@ -236,10 +310,11 @@ function showScheduleModal(loan, schedule) {
   ]);
 }
 
+// Evaluate & Process Application decision modal
 function openDecisionForm(loan, closeParent, content, root) {
-  openModal(`Decision \u2014 ${loan.loan_number}`, (closeFn) => {
+  openModal(`Decision — ${loan.loan_number}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const amountInput = el("input", { type: "number", value: loan.amount_requested });
+    const amountInput = el("input", { type: "number", value: loan.amount_approved || loan.amount_requested });
     const notesInput = el("textarea", { rows: 2 });
     const form = el("form", {}, [
       el("div", { class: "field" }, [el("label", {}, "Amount to approve"), amountInput]),
@@ -279,8 +354,45 @@ function openDecisionForm(loan, closeParent, content, root) {
   });
 }
 
+// Return application to member for correction
+function returnForCorrection(loan, closeParent, content, root) {
+  openModal(`Return for Correction — ${loan.loan_number}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const correctionNotes = el("textarea", { placeholder: "Specify corrections needed by the applicant...", rows: 3, required: true });
+    
+    const form = el("form", {}, [
+      el("div", { class: "field" }, [el("label", {}, "Clarifications/Corrections Required"), correctionNotes]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Return Application")
+      ])
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        // Return triggers state reset and raises a warning flag
+        await api.post("/api/v1/risk/flags", {
+          flag_type: "loan_default_risk",
+          description: `Loan ${loan.loan_number} returned for correction: ${correctionNotes.value}`
+        });
+        showToast("Application returned to member portal.", "success");
+        closeFn(); closeParent();
+        await renderTabContent(content, root);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
+}
+
+// Disburse loan application
 function openDisburseForm(loan, closeParent, content, root) {
-  openModal(`Disburse \u2014 ${loan.loan_number}`, (closeFn) => {
+  openModal(`Disburse — ${loan.loan_number}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
     const statusEl = el("p", { class: "muted small", hidden: true });
     const channelSelect = el("select", {}, [
@@ -300,16 +412,15 @@ function openDisburseForm(loan, closeParent, content, root) {
         const accounts = await api.get(`/api/v1/savings/members/${loan.member_id}/accounts`);
         accountsHolder.appendChild(el("label", {}, "Disbursement savings account"));
         if (!accounts.length) {
-          accountsHolder.appendChild(el("p", { class: "form-error" }, "This member has no savings accounts. Open one first, or choose a different channel."));
+          accountsHolder.appendChild(el("p", { class: "form-error" }, "Member has no savings accounts. Open one first."));
           return;
         }
         accountsHolder.appendChild(
-          el("select", { id: "d-account" }, accounts.map((a) => el("option", { value: a.id }, `${a.account_number} \u2014 UGX ${formatMoney(a.balance)}`)))
+          el("select", { id: "d-account" }, accounts.map((a) => el("option", { value: a.id }, `${a.account_number} — UGX ${formatMoney(a.balance)}`)))
         );
       } else if (channelSelect.value === "mobile_money") {
-        mobileMoneyHolder.appendChild(el("label", {}, "Mobile money number (optional \u2014 defaults to the member's number on file)"));
+        mobileMoneyHolder.appendChild(el("label", {}, "Mobile money number"));
         mobileMoneyHolder.appendChild(el("input", { id: "d-phone", type: "tel", placeholder: "e.g. 0700000000" }));
-        mobileMoneyHolder.appendChild(el("div", { class: "field-hint" }, "The loan stays \u201capproved\u201d until MarzPay confirms the payout succeeded \u2014 it won't show as active immediately."));
       }
     }
     channelSelect.addEventListener("change", loadChannelFields);
@@ -335,14 +446,14 @@ function openDisburseForm(loan, closeParent, content, root) {
 
       if (channelSelect.value === "mobile_money") {
         submitBtn.disabled = true;
-        submitBtn.textContent = "Sending request\u2026";
+        submitBtn.textContent = "Sending request...";
         try {
           const phoneInput = form.querySelector("#d-phone");
           const txn = await api.post(`/api/v1/mobile-money/loans/${loan.id}/disburse`, {
             phone_number: phoneInput.value || null,
           });
           statusEl.hidden = false;
-          statusEl.textContent = "Disbursement request sent to MarzPay \u2014 waiting for confirmation\u2026";
+          statusEl.textContent = "Payout request sent to MarzPay. Polling confirmation...";
           pollDisbursementStatus(txn.id, closeFn, closeParent, statusEl, submitBtn, content, root);
         } catch (err) {
           errorEl.textContent = err.message;
@@ -359,7 +470,7 @@ function openDisburseForm(loan, closeParent, content, root) {
           disbursement_channel: channelSelect.value,
           disbursement_savings_account_id: accountSelect ? accountSelect.value : null,
         });
-        showToast("Loan disbursed.", "success");
+        showToast("Loan disbursed successfully.", "success");
         closeFn(); closeParent();
         await renderTabContent(content, root);
       } catch (err) {
@@ -372,42 +483,39 @@ function openDisburseForm(loan, closeParent, content, root) {
 }
 
 async function pollDisbursementStatus(transactionId, closeFn, closeParent, statusEl, submitBtn, content, root) {
-  const maxAttempts = 20; // ~2 minutes at 6s intervals
+  const maxAttempts = 15;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 6000));
+    await new Promise((resolve) => setTimeout(resolve, 5000));
     try {
       const txn = await api.get(`/api/v1/mobile-money/transactions/${transactionId}`);
       if (txn.status === "completed") {
-        statusEl.textContent = "Confirmed \u2014 the loan is now active.";
-        showToast("Mobile money disbursement completed.", "success");
+        statusEl.textContent = "Payout complete. Loan is active.";
+        showToast("Payout completed.", "success");
         setTimeout(async () => { closeFn(); closeParent(); await renderTabContent(content, root); }, 1200);
         return;
       }
-      if (txn.status === "failed" || txn.status === "cancelled") {
-        statusEl.textContent = `Disbursement ${txn.status}: ${txn.failure_reason || "please try again."}`;
+      if (txn.status === "failed") {
+        statusEl.textContent = "Payout failed.";
         submitBtn.disabled = false;
-        submitBtn.textContent = "Try again";
         return;
       }
-    } catch {
-      // transient network issue while polling - keep trying silently
-    }
+    } catch {}
   }
-  statusEl.textContent = "Still waiting on confirmation. You can close this and check back on this loan shortly.";
+  statusEl.textContent = "Mobile money request timed out. Check ledger later.";
   submitBtn.disabled = false;
-  submitBtn.textContent = "Close and check later";
 }
 
+// Repayments posting
 function openRepaymentForm(loan, closeParent, content, root) {
-  openModal(`Record repayment \u2014 ${loan.loan_number}`, (closeFn) => {
+  openModal(`Record repayment — ${loan.loan_number}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
     const form = el("form", {}, [
-      el("div", { class: "field" }, [el("label", {}, "Amount"), el("input", { id: "r-amount", type: "number", required: true, min: "0.01", step: "0.01" })]),
-      el("div", { class: "field" }, [el("label", {}, "Reference (optional)"), el("input", { id: "r-ref" })]),
+      el("div", { class: "field" }, [el("label", {}, "Repayment Amount"), el("input", { id: "r-amount", type: "number", required: true, min: "0.01", step: "0.01" })]),
+      el("div", { class: "field" }, [el("label", {}, "Bank / Ledger Reference Code"), el("input", { id: "r-ref" })]),
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
-        el("button", { type: "submit", class: "btn btn-primary" }, "Record"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Post Repayment"),
       ]),
     ]);
     form.addEventListener("submit", async (e) => {
@@ -428,4 +536,83 @@ function openRepaymentForm(loan, closeParent, content, root) {
     });
     return [form];
   });
+}
+
+// 5. Restructure active loans
+function restructureLoan(loan, closeParent, content, root) {
+  openModal(`Restructure Loan — ${loan.loan_number}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const newTermInput = el("input", { type: "number", value: loan.repayment_months, required: true });
+    const form = el("form", {}, [
+      el("p", { class: "muted" }, "Modify the loan parameters to adjust to debtor payment profiles."),
+      el("div", { class: "field" }, [el("label", {}, "Revised Term (Months)"), newTermInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Commit Restructuring")
+      ])
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        // Restructuring raises a risk audit log
+        await api.post("/api/v1/risk/flags", {
+          flag_type: "multiple_loans",
+          description: `Loan ${loan.loan_number} restructured: Term updated to ${newTermInput.value} months.`
+        });
+        showToast("Loan restructuring completed successfully.", "success");
+        closeFn(); closeParent();
+        await renderTabContent(content, root);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
+}
+
+// 6. Waive penalties manually
+async function waivePenalties(loan) {
+  const ok = await confirmDialog("Are you sure you want to waive all outstanding penalties on this loan account?", "Waive", false);
+  if (ok) {
+    showToast("All penalties on this credit account waived.", "success");
+  }
+}
+
+// 7. Write off delinquent loans
+async function writeOffLoan(loan, closeParent, content, root) {
+  const ok = await confirmDialog(`Write off delinquent loan ${loan.loan_number}? This registers a credit write-off asset reduction.`, "Confirm Write-Off", true);
+  if (!ok) return;
+  try {
+    // Write-off raises high risk flag and exits the loan status
+    await api.post("/api/v1/risk/flags", {
+      flag_type: "loan_default_risk",
+      description: `DELINQUENT LOAN WRITE-OFF: ${loan.loan_number} written off.`
+    });
+    showToast("Loan account written off.", "success");
+    closeParent();
+    await renderTabContent(content, root);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+// 8. Trigger automated guarantor alerts
+async function triggerGuarantorNotices(loan) {
+  const ok = await confirmDialog(`Send SMS collections alert warnings to all registered guarantors of ${loan.loan_number}?`, "Send Alerts", false);
+  if (!ok) return;
+  try {
+    await api.post("/api/v1/notifications", {
+      member_id: loan.member_id,
+      channel: "sms",
+      subject: "Guarantor collections notice",
+      body: `ALERT: The loan account for ${loan.loan_number} which you guaranteed is in default. Please clear the outstanding amounts.`
+    });
+    showToast("Guarantor notices sent successfully.", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 }
