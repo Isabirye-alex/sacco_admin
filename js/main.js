@@ -54,7 +54,6 @@ function initGlobalSearch() {
     if (e.key === "Enter") {
       const query = encodeURIComponent(searchInput.value.trim());
       if (query) {
-        // Appends the query safely for the router or views to interpret
         goTo(`/members?search=${query}`);
       }
     }
@@ -62,7 +61,7 @@ function initGlobalSearch() {
 }
 
 /**
- * Handles fetching audit/risk logs and syncing the notification bell UI
+ * Handles fetching audit/risk logs and syncing the notification bell UI with a live red badge indicator
  */
 function initNotificationSync() {
   const bellBtn = document.getElementById("bell-btn");
@@ -78,6 +77,10 @@ function initNotificationSync() {
     e.stopPropagation();
     const isHidden = bellDropdown.style.display === "none" || !bellDropdown.style.display;
     bellDropdown.style.display = isHidden ? "block" : "none";
+    
+    // Optional: Clear the visual red dot once user clicks to open the panel
+    const liveDot = document.getElementById("nav-bell-live-dot");
+    if (liveDot) liveDot.remove();
   });
 
   // Close dropdown when clicking outside
@@ -89,7 +92,6 @@ function initNotificationSync() {
   // Fetch telemetry / audit data
   async function fetchSystemLogs() {
     try {
-      // Modify this path endpoint to match your environment routing if necessary
       const response = await fetch("/api/logs/system-warnings"); 
       if (!response.ok) throw new Error("Network response failure.");
       
@@ -103,18 +105,47 @@ function initNotificationSync() {
   function renderNotificationsUI(logs) {
     const activeAlerts = logs.filter(log => !log.read);
 
+    // Dynamic clean rendering of the live warning red dot node
+    let liveDot = document.getElementById("nav-bell-live-dot");
+
     if (activeAlerts.length > 0) {
+      // 1. Maintain numeric counter bubble
       bellBadge.textContent = activeAlerts.length > 99 ? "99+" : activeAlerts.length;
       bellBadge.style.display = "block";
       
+      // 2. Mount / maintain pulsing warning red dot onto container
+      if (!liveDot) {
+        liveDot = document.createElement("span");
+        liveDot.id = "nav-bell-live-dot";
+        Object.assign(liveDot.style, {
+          position: "absolute",
+          top: "4px",
+          right: "4px",
+          width: "10px",
+          height: "10px",
+          backgroundColor: "#dc2626",
+          borderRadius: "50%",
+          border: "2px solid #ffffff",
+          display: "inline-block",
+          pointerEvents: "none"
+        });
+        
+        if (window.getComputedStyle(bellBtn).position === "static") {
+          bellBtn.style.position = "relative";
+        }
+        bellBtn.appendChild(liveDot);
+      }
+
       bellItems.innerHTML = activeAlerts.map(alert => `
-        <div class="notification-item" style="padding: 8px; border-radius: 4px; background: #fdf2f2; border-left: 3px solid #B3261E; font-size: 12px; font-family: system-ui, sans-serif;">
+        <div class="notification-item" style="padding: 8px; margin-bottom: 6px; border-radius: 4px; background: #fdf2f2; border-left: 3px solid #B3261E; font-size: 12px; font-family: system-ui, sans-serif;">
           <strong style="display: block; color: #B3261E;">${alert.severity || "WARNING"}</strong>
-          <span style="color: var(--pine-900);">${alert.message}</span>
+          <span style="color: #1b4b43;">${alert.message}</span>
         </div>
       `).join("");
     } else {
+      // Clean teardown arrays when warnings go down to 0
       bellBadge.style.display = "none";
+      if (liveDot) liveDot.remove();
       bellItems.innerHTML = `<div class="muted small" style="text-align: center; padding: 20px 0;">No active system warnings.</div>`;
     }
   }
