@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>SACCO Admin Portal</title>
-<link rel="stylesheet" href="css/style.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SACCO Admin Portal</title>
+  <link rel="stylesheet" href="css/style.css" />
 </head>
+
 <body>
 
   <!-- Login screen -->
@@ -57,29 +59,55 @@
     </aside>
 
     <div class="main-col">
-      <header class="topbar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--line); background: white;">
+      <header class="topbar"
+        style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--line); background: white;">
         <div style="display: flex; align-items: center; gap: 15px;">
           <button id="menu-toggle" class="icon-btn" aria-label="Toggle menu">&#9776;</button>
           <h2 id="page-title" style="margin: 0;">Dashboard</h2>
         </div>
-        <div style="display: flex; align-items: center; gap: 20px; flex: 1; max-width: 500px; justify-content: flex-end;">
+        <div
+          style="display: flex; align-items: center; gap: 20px; flex: 1; max-width: 500px; justify-content: flex-end;">
           <!-- Global Search Container -->
           <div class="search-container" style="position: relative; width: 100%; max-width: 260px;">
-            <input type="text" id="global-search" placeholder="Search members..." style="width: 100%; padding: 6px 12px 6px 32px; border-radius: 20px; border: 1px solid var(--line); font-size: 13px; outline: none; background: #f8faf9;" />
-            <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--muted); pointer-events: none;">🔍</span>
+            <input type="text" id="global-search" placeholder="Search members..."
+              style="width: 100%; padding: 6px 12px 6px 32px; border-radius: 20px; border: 1px solid var(--line); font-size: 13px; outline: none; background: #f8faf9;" />
+            <span
+              style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--muted); pointer-events: none; display: flex; align-items: center;">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2"
+                stroke="currentColor" style="width: 100%; height: 100%;">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                  d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.604 10.604Z" />
+              </svg>
+            </span>
           </div>
           <!-- Notification Bell Container -->
           <div class="bell-container" style="position: relative;">
-            <button id="bell-btn" class="icon-btn" style="position: relative; font-size: 18px; background: none; border: none; padding: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center; outline: none;">🔔
-              <span id="bell-badge" style="position: absolute; top: -2px; right: -2px; min-width: 16px; height: 16px; border-radius: 50%; font-size: 9px; line-height: 16px; text-align: center; color: white; background: #B3261E; display: none; font-weight: bold; padding: 0 3px; box-shadow: 0 0 2px rgba(0,0,0,0.2);">0</span>
+            <button id="bell-btn" class="icon-btn"
+              style="position: relative; background: none; border: none; padding: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; outline: none; color: var(--muted, #64748b); transition: color 0.2s ease;">
+              <!-- Production-ready Notification Bell SVG -->
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                style="display: block;">
+                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+              </svg>
+
+              <!-- Dynamic Positioned Badge -->
+              <span id="bell-badge"
+                style="position: absolute; top: 2px; right: 2px; transform: translate(25%, -25%); min-width: 16px; height: 16px; border-radius: 999px; font-size: 9px; font-family: system-ui, -apple-system, sans-serif; line-height: 16px; text-align: center; color: white; background: #B3261E; display: none; font-weight: bold; padding: 0 4px; box-shadow: 0 0 0 2px #ffffff, 0 1px 3px rgba(0,0,0,0.15); box-sizing: border-box;">0</span>
             </button>
+
             <!-- Dropdown Alert Menu -->
-            <div id="bell-dropdown" class="card" style="display: none; position: absolute; right: 0; top: 38px; width: 320px; z-index: 10000; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-height: 400px; overflow-y: auto; padding: 12px; border: 1px solid var(--line); background: white; border-radius: 8px;">
-              <h4 style="margin: 0 0 10px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; color: var(--pine-900); display: flex; justify-content: space-between; align-items: center;">
+            <div id="bell-dropdown" class="card"
+              style="display: none; position: absolute; right: 0; top: 38px; width: 320px; z-index: 10000; box-shadow: 0 4px 20px rgba(0,0,0,0.15); max-height: 400px; overflow-y: auto; padding: 12px; border: 1px solid var(--line); background: white; border-radius: 8px;">
+              <h4
+                style="margin: 0 0 10px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; color: var(--pine-900); display: flex; justify-content: space-between; align-items: center; font-family: system-ui, -apple-system, sans-serif;">
                 <span>System Notifications</span>
-                <span class="muted small" style="font-weight: normal; cursor: pointer;" id="bell-clear-btn">Mark read</span>
+                <span class="muted small" style="font-weight: normal; cursor: pointer;" id="bell-clear-btn">Mark
+                  read</span>
               </h4>
-              <div id="bell-items" style="display:flex; flex-direction:column; gap:8px;">
+              <div id="bell-items"
+                style="display:flex; flex-direction:column; gap:8px; font-family: system-ui, -apple-system, sans-serif;">
                 <div class="muted small" style="text-align: center; padding: 20px 0;">No active system warnings.</div>
               </div>
             </div>
@@ -97,4 +125,5 @@
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
   <script type="module" src="js/main.js"></script>
 </body>
+
 </html>
