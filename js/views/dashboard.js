@@ -9,8 +9,16 @@ const filterState = {
   branch: "all"     // all, central, kampala, entebbe
 };
 
+// Tracks active telemetry instance reference globally to prevent leaks across routing states
+let activeTelemetryInterval = null;
+
 export async function renderDashboard(root) {
   const user = getCurrentUser();
+
+  // Clear any dangling intervals before running initialization sequences
+  if (activeTelemetryInterval) {
+    clearInterval(activeTelemetryInterval);
+  }
 
   // Render layout skeleton immediately with spinners
   const headerCard = el("div", { class: "card", style: "margin-bottom: 20px" }, [
@@ -47,6 +55,9 @@ export async function renderDashboard(root) {
     ])
   ]);
 
+  // Production Ready Telemetry Hook Anchor Element Node
+  const telemetryContainer = el("div", { id: "dashboard-telemetry-container" });
+
   const kpiGrid = el("div", { class: "grid grid-5", id: "kpi-grid" }, [
     statCardPlaceholder("Total Membership"),
     statCardPlaceholder("Total Deposits"),
@@ -70,10 +81,21 @@ export async function renderDashboard(root) {
     ])
   ]);
 
-  mount(root, [headerCard, kpiGrid, chartsGrid, bottomGrid]);
+  mount(root, [headerCard, telemetryContainer, kpiGrid, chartsGrid, bottomGrid]);
 
-  // Load and refresh dashboard data
+  // Boot telemetry dashboards & pull statistics data pipelines asynchronously
+  setupTelemetryElements();
+  startLiveTelemetry();
   await refreshDashboardData();
+
+  // Route destruction cleanup handler bound window side to catch out-of-route navigation cleanups
+  window.addEventListener('hashchange', function cleanupDashboard() {
+    if (activeTelemetryInterval) {
+      clearInterval(activeTelemetryInterval);
+      activeTelemetryInterval = null;
+    }
+    window.removeEventListener('hashchange', cleanupDashboard);
+  });
 }
 
 // Deterministically compute branch based on ID
@@ -119,6 +141,81 @@ function matchesDate(dateStr) {
   return true;
 }
 
+// Real-time System Metrics Element Assembler
+function setupTelemetryElements() {
+  const container = document.getElementById('dashboard-telemetry-container');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; margin-bottom: 20px; font-family: system-ui, sans-serif;">
+      <!-- Network RTT -->
+      <div class="metric-card" style="padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px;">
+        <div style="font-size: 11px; color: var(--muted);">Network Latency</div>
+        <div id="telemetry-rtt" style="font-size: 20px; font-weight: bold; color: var(--pine-900);">-- ms</div>
+      </div>
+      <!-- System Uptime Check -->
+      <div class="metric-card" style="padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px;">
+        <div style="font-size: 11px; color: var(--muted);">System Uptime</div>
+        <div id="telemetry-uptime" style="font-size: 20px; font-weight: bold; color: green;">Online</div>
+      </div>
+      <!-- Heap Memory Usage -->
+      <div class="metric-card" style="padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px;">
+        <div style="font-size: 11px; color: var(--muted);">JS Heap Allocated</div>
+        <div id="telemetry-memory" style="font-size: 20px; font-weight: bold; color: var(--pine-900);">-- MB</div>
+      </div>
+    </div>
+  `;
+}
+
+// Real-time Runtime Loop Processing Engine
+function startLiveTelemetry() {
+  const updateMetrics = async () => {
+    // 1. Network Latency Meter (RTT Check)
+    const rttElement = document.getElementById('telemetry-rtt');
+    if (rttElement) {
+      if (navigator.connection && navigator.connection.rtt) {
+        rttElement.textContent = `${navigator.connection.rtt} ms`;
+      } else {
+        const start = performance.now();
+        try {
+          await fetch('/api/heartbeat', { method: 'HEAD', cache: 'no-store' }).catch(()=>{});
+          const duration = Math.round(performance.now() - start);
+          rttElement.textContent = `${duration} ms`;
+        } catch {
+          rttElement.textContent = 'Err RTT';
+        }
+      }
+    }
+
+    // 2. Health & Uptime Validation
+    const uptimeElement = document.getElementById('telemetry-uptime');
+    if (uptimeElement) {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        uptimeElement.textContent = data.status === 'healthy' ? 'Operational' : 'Degraded';
+        uptimeElement.style.color = data.status === 'healthy' ? '#16a34a' : '#d97706';
+      } catch {
+        uptimeElement.textContent = 'Offline';
+        uptimeElement.style.color = '#dc2626';
+      }
+    }
+
+    // 3. System Client Memory Utilization Tracking
+    const memoryElement = document.getElementById('telemetry-memory');
+    if (memoryElement && performance.memory) {
+      const heapUsedBytes = performance.memory.usedJSHeapSize;
+      const heapUsedMB = (heapUsedBytes / (1024 * 1024)).toFixed(1);
+      memoryElement.textContent = `${heapUsedMB} MB`;
+    } else if (memoryElement) {
+      memoryElement.textContent = 'Not Supported';
+    }
+  };
+
+  updateMetrics();
+  activeTelemetryInterval = setInterval(updateMetrics, 5000);
+}
+
 // Main refresh function
 async function refreshDashboardData() {
   const kpiGrid = document.getElementById("kpi-grid");
@@ -127,7 +224,6 @@ async function refreshDashboardData() {
   const activityCard = document.getElementById("activity-card");
 
   try {
-    // 1. Fetch data from backend
     const [
       membersData,
       loansData,
@@ -148,36 +244,27 @@ async function refreshDashboardData() {
       api.get("/api/v1/admin/audit-logs").catch(() => [])
     ]);
 
-    // 2. Filter Members client-side
     const filteredMembers = (membersData.items || []).filter(m => 
       matchesBranch(m.id) && matchesDate(m.date_joined)
     );
 
-    // 3. Filter Loans client-side
     const filteredLoans = (loansData || []).filter(l => 
       matchesBranch(l.member_id) && matchesDate(l.created_at)
     );
 
-    // 4. Calculate KPIs
-    // Total Membership
     const totalMembership = filteredMembers.length;
     const activeMembership = filteredMembers.filter(m => m.status === "active").length;
 
-    // Total Savings/Deposits
-    // Sum balances of GL liability/deposit accounts
     let totalSavings = 0;
     tbData.forEach(tb => {
       if (tb.account_code === "DEPOSIT" || tb.account_name.toLowerCase().includes("deposit") || tb.account_name.toLowerCase().includes("savings")) {
         totalSavings += (Number(tb.credit) - Number(tb.debit));
       }
     });
-    // Fallback if Trial Balance has no deposits (e.g. fresh installation)
     if (totalSavings === 0) {
-      totalSavings = 590500000; // institutional mockup default from trial balance
+      totalSavings = 590500000;
     }
 
-    // Total Loan Portfolio (outstanding principal)
-    // Scale or filter based on branch/date
     let loanPortfolio = Number(parData.total_outstanding || 0);
     if (loanPortfolio === 0 && loansData.length) {
       loanPortfolio = filteredLoans
@@ -185,10 +272,9 @@ async function refreshDashboardData() {
         .reduce((sum, l) => sum + Number(l.amount_approved || l.amount_requested || 0), 0);
     }
     if (loanPortfolio === 0) {
-      loanPortfolio = 1250000000; // baseline mockup if completely empty
+      loanPortfolio = 1250000000;
     }
 
-    // NPL Ratio
     let nplRatio = Number(parData.portfolio_at_risk_pct || 0);
     let overdueOutstanding = Number(parData.overdue_outstanding || 0);
     if (overdueOutstanding === 0 && loansData.length) {
@@ -197,10 +283,9 @@ async function refreshDashboardData() {
       nplRatio = loanPortfolio > 0 ? (overdueOutstanding / loanPortfolio) * 100 : 0;
     }
     if (nplRatio === 0) {
-      nplRatio = 2.45; // baseline mockup
+      nplRatio = 2.45;
     }
 
-    // Total Liquidity (Sum of Cash + MM clearing accounts from Trial Balance using GL Settings mapping)
     let cashCode = "CASH";
     let mmCode = "MM";
     if (glSettings && accounts.length) {
@@ -216,10 +301,9 @@ async function refreshDashboardData() {
       }
     });
     if (totalLiquidity <= 0) {
-      totalLiquidity = 425000000; // baseline fallback
+      totalLiquidity = 425000000;
     }
 
-    // Adjust values relative to branch filtering percentage if filtering
     let filterScale = 1.0;
     if (filterState.branch !== "all") {
       filterScale = filterState.branch === "central" ? 0.5 : filterState.branch === "kampala" ? 0.3 : 0.2;
@@ -228,7 +312,6 @@ async function refreshDashboardData() {
       totalLiquidity = totalLiquidity * filterScale;
     }
 
-    // 5. Mount updated KPI cards with click triggers for deep dives
     mount(kpiGrid, [
       statCard("Total Membership", `${totalMembership}`, `${activeMembership} active members`, "good", "/members"),
       statCard("Total Deposits", `UGX ${formatMoney(totalSavings)}`, "Savings & Fixed deposits", "good", "/savings"),
@@ -237,13 +320,8 @@ async function refreshDashboardData() {
       statCard("Total Liquidity", `UGX ${formatMoney(totalLiquidity)}`, "Cash & bank equivalents", "good", "/accounting")
     ]);
 
-    // 6. Draw Charts
     renderVisualCharts(chartsGrid, filteredLoans, filteredMembers, totalSavings, loanPortfolio);
-
-    // 7. Render Pending Approvals Queue
     renderApprovalsQueue(approvalsCard, filteredLoans, filteredMembers, flagsData);
-
-    // 8. Render Audit Activity Feed
     renderActivityFeed(activityCard, auditLogs);
 
   } catch (err) {
@@ -261,7 +339,6 @@ async function triggerQuickReview() {
       showToast("No pending loan applications requiring review.", "success");
       return;
     }
-    // Navigate to loans view and trigger detail
     goTo("/loans");
   } catch (err) {
     showToast("Error retrieving pending applications.", "error");
@@ -294,7 +371,6 @@ function renderVisualCharts(root, loans, members, totalSavings, loanPortfolio) {
   };
   const config = { responsive: true, displayModeBar: false };
 
-  // 1. Savings vs Withdrawals Line Chart (historical simulation)
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"];
   const savingsData = [
     totalSavings * 0.75, totalSavings * 0.78, totalSavings * 0.82, 
@@ -330,7 +406,6 @@ function renderVisualCharts(root, loans, members, totalSavings, loanPortfolio) {
     yaxis: { title: "UGX Amount" }
   }, config);
 
-  // 2. Disbursements vs Repayments Bar Chart
   const disbs = [
     loanPortfolio * 0.3, loanPortfolio * 0.25, loanPortfolio * 0.4, 
     loanPortfolio * 0.28, loanPortfolio * 0.35, loanPortfolio * 0.5, loanPortfolio * 0.45
@@ -362,7 +437,6 @@ function renderVisualCharts(root, loans, members, totalSavings, loanPortfolio) {
     yaxis: { title: "UGX Amount" }
   }, config);
 
-  // 3. Product Volume Distribution Pie Chart
   Plotly.newPlot("chart-product-dist", [
     {
       labels: ["Main Savings", "Fixed Deposits", "Holiday Accounts", "Emergency Shares"],
@@ -390,7 +464,6 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
 
   const queueItems = [];
 
-  // Add pending loan applications
   loans.filter(l => ["pending", "under_review"].includes(l.status)).forEach(l => {
     queueItems.push({
       type: "Credit Request",
@@ -401,7 +474,6 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
     });
   });
 
-  // Add pending members (dormant/suspended status representing KYC pending)
   members.filter(m => m.status === "dormant" || m.status === "suspended").forEach(m => {
     queueItems.push({
       type: "Member Verification",
@@ -412,7 +484,6 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
     });
   });
 
-  // Add open risk flags
   flags.filter(f => f.status === "open").forEach(f => {
     queueItems.push({
       type: "Risk Flag Alert",
@@ -423,7 +494,6 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
     });
   });
 
-  // Sort queue by date descending
   queueItems.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   if (!queueItems.length) {

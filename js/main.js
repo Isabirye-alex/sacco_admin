@@ -43,6 +43,99 @@ function renderUserChip() {
   chip.appendChild(role);
 }
 
+/**
+ * Manages global search redirects to the members view
+ */
+function initGlobalSearch() {
+  const searchInput = document.getElementById("global-search");
+  if (!searchInput) return;
+
+  searchInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      const query = encodeURIComponent(searchInput.value.trim());
+      if (query) {
+        // Appends the query safely for the router or views to interpret
+        goTo(`/members?search=${query}`);
+      }
+    }
+  });
+}
+
+/**
+ * Handles fetching audit/risk logs and syncing the notification bell UI
+ */
+function initNotificationSync() {
+  const bellBtn = document.getElementById("bell-btn");
+  const bellDropdown = document.getElementById("bell-dropdown");
+  const bellBadge = document.getElementById("bell-badge");
+  const bellItems = document.getElementById("bell-items");
+  const clearBtn = document.getElementById("bell-clear-btn");
+
+  if (!bellBtn || !bellDropdown) return;
+
+  // Toggle Dropdown Display
+  bellBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isHidden = bellDropdown.style.display === "none" || !bellDropdown.style.display;
+    bellDropdown.style.display = isHidden ? "block" : "none";
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener("click", () => {
+    bellDropdown.style.display = "none";
+  });
+  bellDropdown.addEventListener("click", (e) => e.stopPropagation());
+
+  // Fetch telemetry / audit data
+  async function fetchSystemLogs() {
+    try {
+      // Modify this path endpoint to match your environment routing if necessary
+      const response = await fetch("/api/logs/system-warnings"); 
+      if (!response.ok) throw new Error("Network response failure.");
+      
+      const logs = await response.json(); 
+      renderNotificationsUI(logs);
+    } catch (error) {
+      console.error("Failed to sync notification telemetry:", error);
+    }
+  }
+
+  function renderNotificationsUI(logs) {
+    const activeAlerts = logs.filter(log => !log.read);
+
+    if (activeAlerts.length > 0) {
+      bellBadge.textContent = activeAlerts.length > 99 ? "99+" : activeAlerts.length;
+      bellBadge.style.display = "block";
+      
+      bellItems.innerHTML = activeAlerts.map(alert => `
+        <div class="notification-item" style="padding: 8px; border-radius: 4px; background: #fdf2f2; border-left: 3px solid #B3261E; font-size: 12px; font-family: system-ui, sans-serif;">
+          <strong style="display: block; color: #B3261E;">${alert.severity || "WARNING"}</strong>
+          <span style="color: var(--pine-900);">${alert.message}</span>
+        </div>
+      `).join("");
+    } else {
+      bellBadge.style.display = "none";
+      bellItems.innerHTML = `<div class="muted small" style="text-align: center; padding: 20px 0;">No active system warnings.</div>`;
+    }
+  }
+
+  // Clear/Mark Read Action
+  if (clearBtn) {
+    clearBtn.addEventListener("click", async () => {
+      try {
+        await fetch("/api/logs/clear", { method: "POST" });
+        renderNotificationsUI([]);
+      } catch (err) {
+        console.error("Failed to clear notifications:", err);
+      }
+    });
+  }
+
+  // Initial call and poll interval sync every 30 seconds
+  fetchSystemLogs();
+  setInterval(fetchSystemLogs, 30000);
+}
+
 async function bootstrap() {
   if (isAuthenticated()) {
     try {
@@ -53,6 +146,10 @@ async function bootstrap() {
     }
   }
   startRouter();
+  
+  // Initialize navigation & real-time notification dependencies
+  initGlobalSearch();
+  initNotificationSync();
 }
 
 document.getElementById("login-form").addEventListener("submit", async (e) => {

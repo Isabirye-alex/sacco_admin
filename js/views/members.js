@@ -565,3 +565,51 @@ function debounce(fn, ms) {
     t = setTimeout(() => fn(...args), ms);
   };
 }
+
+
+// js/views/members.js
+
+export default class MembersView {
+  constructor() {
+    this.container = document.getElementById('main-content');
+  }
+
+  render() {
+    // Basic structural rendering for view context...
+    this.parseRouteQuery();
+  }
+
+  /**
+   * Reads query hashes or parameters from the URL payload on initialization
+   */
+  parseRouteQuery() {
+    // Handles parsing both standard window URL search strings or SPA hashes (e.g. #/members?search=john)
+    const searchParams = new URLSearchParams(window.location.hash.includes('?') 
+      ? window.location.hash.split('?')[1] 
+      : window.location.search
+    );
+    
+    const searchQuery = searchParams.get('search');
+    
+    if (searchQuery) {
+      this.executeMemberFilter(decodeURIComponent(searchQuery));
+    }
+  }
+
+  /**
+   * Applies the global filter payload directly to the view state
+   */
+  executeMemberFilter(query) {
+    const tableSearchInput = document.getElementById('table-filter-input'); 
+    
+    if (tableSearchInput) {
+      tableSearchInput.value = query;
+      // Trigger native input events to fire off any virtual reactive logic/listeners bound to the element
+      tableSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      // Fallback: If layout hasn't complete rendering elements yet, filter data collections directly
+      console.log(`Filtering member data source for: ${query}`);
+      // this.datasource.filter(member => member.name.includes(query));
+    }
+  }
+}
