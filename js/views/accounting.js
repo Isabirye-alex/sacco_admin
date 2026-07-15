@@ -534,8 +534,24 @@ function payVendorBillModal(vendor, accounts) {
     const amountInput = el("input", { type: "number", required: true, min: "1", placeholder: "UGX Amount" });
     const invoiceInput = el("input", { placeholder: "Invoice identifier string" });
 
-    const assetAccounts = accounts.filter(a => a.account_type === "asset");
-    const expenseAccounts = accounts.filter(a => a.account_type === "expense");
+    // FIX: Case-insensitive filtering dynamically handles uppercase or mixed-case types from database schemas
+    const assetAccounts = (accounts || []).filter(
+      a => a.account_type && a.account_type.toLowerCase() === "asset"
+    );
+    const expenseAccounts = (accounts || []).filter(
+      a => a.account_type && a.account_type.toLowerCase() === "expense"
+    );
+
+    // Safeguard: Present error element state instead of breaking rendering if configuration parameters are missing
+    if (assetAccounts.length === 0 || expenseAccounts.length === 0) {
+      return [
+        el("div", { class: "ac-card ac-empty-state" }, [
+          el("p", { style: "color: var(--rose-600); font-weight: 600;" }, "Configuration Error"),
+          el("p", { class: "muted small" }, "You must register at least one Asset account and one Expense account in your Chart of Accounts first."),
+          el("button", { type: "button", class: "btn btn-secondary", style: "margin-top: 10px;", onclick: closeFn }, "Close")
+        ])
+      ];
+    }
 
     const assetSelect = el("select", { class: "ac-input" }, assetAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
     const expenseSelect = el("select", { class: "ac-input" }, expenseAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
@@ -560,6 +576,13 @@ function payVendorBillModal(vendor, accounts) {
       e.preventDefault();
       errorEl.hidden = true;
       const amt = Number(amountInput.value);
+
+      if (!expenseSelect.value || !assetSelect.value) {
+        errorEl.textContent = "Please select both an Expense and an Asset account.";
+        errorEl.hidden = false;
+        return;
+      }
+
       try {
         await api.post("/api/v1/accounting/journal-entries", {
           narrative: `Vendor Payout: ${vendor.name} (Invoice: ${invoiceInput.value || "OTC"})`,
@@ -571,7 +594,7 @@ function payVendorBillModal(vendor, accounts) {
         showToast("Vendor transaction logged successfully.", "success");
         closeFn();
       } catch (err) {
-        errorEl.textContent = err.message;
+        errorEl.textContent = err.message || "Failed to post ledger transaction.";
         errorEl.hidden = false;
       }
     });
