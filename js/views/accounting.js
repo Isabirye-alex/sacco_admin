@@ -18,6 +18,13 @@ const ICONS = {
   trash: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>`
 };
 
+// Helper utility to safely create an element containing an inline SVG string
+function createIconSpan(svgString) {
+  const span = el("span", { class: "ac-btn-icon-wrapper" });
+  span.innerHTML = svgString;
+  return span;
+}
+
 export async function renderAccounting(root) {
   injectGlobalStylesOnce();
 
@@ -42,14 +49,12 @@ function tabButton(key, label, iconSvg, root) {
       if (active === key) return;
       active = key; 
       
-      // Update active classes on tab buttons instantly without full redraw
       const parent = e.currentTarget.parentNode;
       if (parent) {
         parent.querySelectorAll(".ac-tab-btn").forEach(b => b.classList.remove("active"));
       }
       e.currentTarget.classList.add("active");
 
-      // Select and update just the dynamic content area
       const contentWrapper = root.querySelector(".ac-tab-content-wrapper");
       if (contentWrapper) {
         await renderTabContent(contentWrapper, root);
@@ -128,15 +133,19 @@ async function renderAccountsTab(content, root) {
     }
   });
 
+  const searchIconSpan = el("span", { class: "ac-search-icon" });
+  searchIconSpan.innerHTML = ICONS.search;
+
+  // FIX: Using createIconSpan(ICONS.plus) instead of standard string rendering
   const header = el("div", { class: "ac-card-header-row" }, [
     el("div", { class: "ac-search-wrapper" }, [
-      el("span", { class: "ac-search-icon" }, ICONS.search),
+      searchIconSpan,
       searchInput
     ]),
     el("button", { 
       class: "ac-btn-primary", 
       onclick: () => openAccountModal(content, root) 
-    }, [el("span", {}, ICONS.plus), el("span", {}, "New Account")]),
+    }, [createIconSpan(ICONS.plus), el("span", {}, "New Account")]),
   ]);
 
   const treeWrapper = el("div", { class: "ac-fade-in" });
@@ -330,7 +339,6 @@ async function renderJournalTab(content, root) {
       showToast("Journal entry successfully posted.", "success");
       active = "trial-balance";
       
-      // Update Tab Navigation Active state visually
       const tabbar = root.querySelector(".ac-tabs-container");
       if (tabbar) {
         tabbar.querySelectorAll(".ac-tab-btn").forEach(btn => btn.classList.remove("active"));
@@ -439,15 +447,19 @@ async function renderVendorsTab(content, root) {
     }
   });
 
+  const searchIconSpan = el("span", { class: "ac-search-icon" });
+  searchIconSpan.innerHTML = ICONS.search;
+
+  // FIX: Using createIconSpan(ICONS.plus) instead of raw string rendering for "Register Vendor"
   const header = el("div", { class: "ac-card-header-row" }, [
     el("div", { class: "ac-search-wrapper" }, [
-      el("span", { class: "ac-search-icon" }, ICONS.search),
+      searchIconSpan,
       searchInput
     ]),
     el("button", { 
       class: "ac-btn-primary", 
       onclick: () => openVendorModal(content, root) 
-    }, [el("span", {}, ICONS.plus), el("span", {}, "Register Vendor")]),
+    }, [createIconSpan(ICONS.plus), el("span", {}, "Register Vendor")]),
   ]);
 
   const tableWrapper = el("div", { class: "ac-fade-in" });
@@ -534,7 +546,6 @@ function payVendorBillModal(vendor, accounts) {
     const amountInput = el("input", { type: "number", required: true, min: "1", placeholder: "UGX Amount" });
     const invoiceInput = el("input", { placeholder: "Invoice identifier string" });
 
-    // FIX: Case-insensitive filtering dynamically handles uppercase or mixed-case types from database schemas
     const assetAccounts = (accounts || []).filter(
       a => a.account_type && a.account_type.toLowerCase() === "asset"
     );
@@ -542,7 +553,6 @@ function payVendorBillModal(vendor, accounts) {
       a => a.account_type && a.account_type.toLowerCase() === "expense"
     );
 
-    // Safeguard: Present error element state instead of breaking rendering if configuration parameters are missing
     if (assetAccounts.length === 0 || expenseAccounts.length === 0) {
       return [
         el("div", { class: "ac-card ac-empty-state" }, [
@@ -770,12 +780,20 @@ function injectGlobalStylesOnce() {
       color: #94a3b8;
       display: flex;
     }
+    
+    /* Dedicated Wrapper to host inline SVGs safely */
+    .ac-btn-icon-wrapper {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
 
     /* Buttons */
     .ac-btn-primary {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       background: #0f172a;
       color: #ffffff;
       border: none;
