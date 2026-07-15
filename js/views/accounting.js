@@ -38,9 +38,22 @@ export async function renderAccounting(root) {
 function tabButton(key, label, iconSvg, root) {
   const btn = el("button", { 
     class: `ac-tab-btn ${active === key ? "active" : ""}`, 
-    onclick: async () => { 
+    onclick: async (e) => { 
+      if (active === key) return;
       active = key; 
-      await renderAccounting(root); 
+      
+      // Update active classes on tab buttons instantly without full redraw
+      const parent = e.currentTarget.parentNode;
+      if (parent) {
+        parent.querySelectorAll(".ac-tab-btn").forEach(b => b.classList.remove("active"));
+      }
+      e.currentTarget.classList.add("active");
+
+      // Select and update just the dynamic content area
+      const contentWrapper = root.querySelector(".ac-tab-content-wrapper");
+      if (contentWrapper) {
+        await renderTabContent(contentWrapper, root);
+      }
     } 
   });
   btn.innerHTML = `${iconSvg} <span>${label}</span>`;
@@ -50,12 +63,19 @@ function tabButton(key, label, iconSvg, root) {
 async function renderTabContent(content, root) {
   mount(content, [el("div", { class: "ac-spinner-container" }, [el("div", { class: "ac-spinner" })])]);
   
-  if (active === "accounts") await renderAccountsTab(content, root);
-  else if (active === "journal") await renderJournalTab(content, root);
-  else if (active === "dividends") await renderDividendsTab(content, root);
-  else if (active === "vendors") await renderVendorsTab(content, root);
-  else if (active === "gl-settings") await renderGlSettingsTab(content, root);
-  else await renderTrialBalanceTab(content);
+  try {
+    if (active === "accounts") await renderAccountsTab(content, root);
+    else if (active === "journal") await renderJournalTab(content, root);
+    else if (active === "dividends") await renderDividendsTab(content, root);
+    else if (active === "vendors") await renderVendorsTab(content, root);
+    else if (active === "gl-settings") await renderGlSettingsTab(content, root);
+    else await renderTrialBalanceTab(content);
+  } catch (err) {
+    mount(content, [el("div", { class: "ac-card ac-empty-state ac-fade-in" }, [
+      el("h4", { style: "color: var(--rose-600);" }, "Error Loading Ledger Data"),
+      el("p", { class: "muted" }, err.message || "An unexpected error occurred.")
+    ])]);
+  }
 }
 
 // --- 1. Trial Balance Tab ---
@@ -172,13 +192,12 @@ function openAccountModal(content, root) {
   openModal("New Chart of Account", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
     
-    // SPREAD options array below to make sure children are flat elements
     const form = el("form", { class: "ac-form" }, [
       el("div", { class: "ac-field" }, [el("label", {}, "Code"), el("input", { id: "coa-code", placeholder: "e.g. 1010", required: true })]),
       el("div", { class: "ac-field" }, [el("label", {}, "Name"), el("input", { id: "coa-name", placeholder: "e.g. Cash in Hand", required: true })]),
       el("div", { class: "ac-field" }, [
         el("label", {}, "Type"),
-        el("select", { id: "coa-type" }, ...["asset", "liability", "equity", "income", "expense"].map((t) => el("option", { value: t }, titleCase(t)))),
+        el("select", { id: "coa-type" }, ["asset", "liability", "equity", "income", "expense"].map((t) => el("option", { value: t }, titleCase(t)))),
       ]),
       errorEl,
       el("div", { class: "modal-actions" }, [
@@ -197,7 +216,6 @@ function openAccountModal(content, root) {
           account_type: form.querySelector("#coa-type").value,
         });
         showToast("Account created successfully.", "success");
-        // Update content/DOM state BEFORE modal closes and is fully unmounted
         await renderTabContent(content, root);
         closeFn();
       } catch (err) {
@@ -232,7 +250,7 @@ async function renderJournalTab(content, root) {
   function addLine() {
     const row = el("div", { class: "ac-je-row ac-slide-up" }, [
       el("div", { style: "flex: 2;" }, [
-        el("select", { class: "je-account ac-input" }, ...accountOptions())
+        el("select", { class: "je-account ac-input" }, accountOptions())
       ]),
       el("div", { style: "flex: 1;" }, [
         el("input", { class: "je-debit ac-input", type: "number", placeholder: "Debit Amount", step: "0.01", oninput: updateBalance })
@@ -311,7 +329,16 @@ async function renderJournalTab(content, root) {
       await api.post("/api/v1/accounting/journal-entries", { narrative: narrativeInput.value || null, lines });
       showToast("Journal entry successfully posted.", "success");
       active = "trial-balance";
-      await renderAccounting(root);
+      
+      // Update Tab Navigation Active state visually
+      const tabbar = root.querySelector(".ac-tabs-container");
+      if (tabbar) {
+        tabbar.querySelectorAll(".ac-tab-btn").forEach(btn => btn.classList.remove("active"));
+        const targetBtn = tabbar.querySelector("button[onclick*='trial-balance']");
+        if (targetBtn) targetBtn.classList.add("active");
+      }
+      
+      await renderTabContent(content, root);
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
@@ -493,7 +520,6 @@ function openVendorModal(content, root) {
       localStorage.setItem("sacco_vendors", JSON.stringify(list));
       showToast("Vendor successfully registered.", "success");
       
-      // Update DOM context tree states before unmounting
       await renderVendorsTab(content, root);
       closeFn();
     });
@@ -511,9 +537,8 @@ function payVendorBillModal(vendor, accounts) {
     const assetAccounts = accounts.filter(a => a.account_type === "asset");
     const expenseAccounts = accounts.filter(a => a.account_type === "expense");
 
-    // SPREAD maps inside el(...) creation wrappers
-    const assetSelect = el("select", { class: "ac-input" }, ...assetAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
-    const expenseSelect = el("select", { class: "ac-input" }, ...expenseAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
+    const assetSelect = el("select", { class: "ac-input" }, assetAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
+    const expenseSelect = el("select", { class: "ac-input" }, expenseAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
 
     const form = el("form", { class: "ac-form" }, [
       el("div", { class: "field-row" }, [
@@ -573,10 +598,10 @@ async function renderGlSettingsTab(content, root) {
   const errorEl = el("p", { class: "form-error", hidden: true });
 
   function accountSelect(id, currentValue) {
-    return el("select", { id }, 
+    return el("select", { id }, [
       el("option", { value: "" }, "— Select system parameter target —"),
       ...accounts.map((a) => el("option", { value: a.id, selected: a.id === currentValue }, `${a.code} — ${a.name}`))
-    );
+    ]);
   }
 
   const cashSelect = accountSelect("gl-cash", settings.cash_account_id);
