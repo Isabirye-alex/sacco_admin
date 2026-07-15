@@ -425,7 +425,7 @@ function openCreateMemberModal(root) {
   });
 }
 
-// Bulk Upload Members via CSV
+// Bulk Upload Members via CSV (with Robust RFC 4180 compliant CSV parsing)
 function openBulkUploadModal(root) {
   openModal("Bulk Onboard Members via CSV", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
@@ -443,6 +443,34 @@ function openBulkUploadModal(root) {
       ])
     ]);
 
+    // Robust CSV line parser supporting quoted fields with commas
+    function parseCSVLine(text) {
+      const result = [];
+      let start = 0;
+      let inQuotes = false;
+      
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          result.push(cleanValue(text.substring(start, i)));
+          start = i + 1;
+        }
+      }
+      result.push(cleanValue(text.substring(start)));
+      return result;
+    }
+
+    function cleanValue(val) {
+      val = val.trim();
+      // Remove surrounding quotes if they exist
+      if (val.startsWith('"') && val.endsWith('"')) {
+        val = val.substring(1, val.length - 1);
+      }
+      return val.replace(/""/g, '"').trim() || null;
+    }
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorEl.hidden = true;
@@ -456,15 +484,17 @@ function openBulkUploadModal(root) {
         progressEl.textContent = "Parsing CSV lines...";
         
         try {
-          const lines = text.split("\n");
+          const lines = text.split(/\r?\n/);
           let uploaded = 0;
           let failed = 0;
           
           for (let i = 1; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) continue;
-            const parts = line.split(",").map(p => p.replace(/^"|"$/g, "").trim());
-            if (parts.length >= 4) {
+            
+            const parts = parseCSVLine(line);
+            
+            if (parts.length >= 4 && parts[0] && parts[1] && parts[2] && parts[3]) {
               const [first, last, nid, phone, email, address] = parts;
               try {
                 await api.post("/api/v1/members", {
@@ -477,17 +507,21 @@ function openBulkUploadModal(root) {
                 });
                 uploaded++;
               } catch (e) {
-                console.error("Bulk upload line error:", e);
+                console.error(`Bulk upload error at line ${i + 1}:`, e);
                 failed++;
               }
               progressEl.textContent = `Uploading: ${uploaded} succeeded, ${failed} failed...`;
+            } else {
+              console.warn(`Skipped invalid line ${i + 1} (missing required columns):`, line);
+              failed++;
             }
           }
+          
           showToast(`Bulk Onboarding complete. ${uploaded} onboarded, ${failed} failed.`, "success");
           closeFn();
           await renderMembers(root);
         } catch (err) {
-          errorEl.textContent = err.message;
+          errorEl.textContent = "Failed to parse CSV file: " + err.message;
           errorEl.hidden = false;
         }
       };
@@ -612,7 +646,6 @@ function debounce(fn, ms) {
 
 
 // js/views/members.js
-
 export default class MembersView {
   constructor() {
     this.container = document.getElementById('main-content');
