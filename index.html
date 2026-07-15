@@ -33,30 +33,85 @@
 
   <!-- App shell (shown once authenticated) -->
   <div id="app-shell" hidden>
-    <aside class="sidebar">
-      <div class="brand brand-sidebar">
-        <div class="brand-mark">S</div>
-        <span>SACCO<span class="staff-tag">Staff</span></span>
+    <aside class="sidebar" style="display: flex; flex-direction: column; height: 100vh; background-color: #1e2522; color: #f4f6f5; width: 260px; border-right: 1px solid #2d3732;">
+  <!-- Brand Header -->
+  <div class="brand brand-sidebar" style="padding: 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2d3732;">
+    <div class="brand-mark" style="background: var(--pine-500, #2d6a4f); color: white; font-weight: bold; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px;">S</div>
+    <span style="font-weight: 600; font-size: 16px; letter-spacing: 0.5px;">SACCO<span class="staff-tag" style="background: #e2e8f0; color: #1e293b; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: bold;">Staff</span></span>
+  </div>
+
+  <!-- Navigation Links -->
+  <nav id="nav-links" style="flex: 1; padding: 15px 10px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto;">
+    <a href="#/dashboard" data-route="dashboard" class="nav-item">
+      <i data-lucide="layout-dashboard"></i>
+      <span>Dashboard</span>
+    </a>
+    <a href="#/members" data-route="members" class="nav-item">
+      <i data-lucide="users"></i>
+      <span>Members</span>
+    </a>
+    <a href="#/savings" data-route="savings" class="nav-item">
+      <i data-lucide="wallet"></i>
+      <span>Savings</span>
+    </a>
+    <a href="#/loans" data-route="loans" class="nav-item">
+      <i data-lucide="hand-coins"></i>
+      <span>Loans</span>
+    </a>
+    <a href="#/accounting" data-route="accounting" class="nav-item">
+      <i data-lucide="calculator"></i>
+      <span>Accounting</span>
+    </a>
+    <a href="#/payroll" data-route="payroll" class="nav-item">
+      <i data-lucide="briefcase-business"></i>
+      <span>HR &amp; Payroll</span>
+    </a>
+    <a href="#/shares" data-route="shares" class="nav-item">
+      <i data-lucide="pie-chart"></i>
+      <span>Shares</span>
+    </a>
+    <a href="#/groups" data-route="groups" class="nav-item">
+      <i data-lucide="user-check"></i>
+      <span>Groups</span>
+    </a>
+    <a href="#/notifications" data-route="notifications" class="nav-item">
+      <i data-lucide="bell"></i>
+      <span>Notifications</span>
+    </a>
+    <a href="#/reports" data-route="reports" class="nav-item">
+      <i data-lucide="trending-up"></i>
+      <span>Reports &amp; Analytics</span>
+    </a>
+    <a href="#/risk" data-route="risk" class="nav-item">
+      <i data-lucide="shield-alert"></i>
+      <span>Risk &amp; Compliance</span>
+    </a>
+    <a href="#/users" data-route="users" class="nav-item">
+      <i data-lucide="fingerprint"></i>
+      <span>Users &amp; Audit</span>
+    </a>
+  </nav>
+
+  <!-- High-Contrast Professional Footer -->
+  <div class="sidebar-footer" style="padding: 16px; border-top: 1px solid #2d3732; background-color: #151a18; display: flex; flex-direction: column; gap: 12px;">
+    <!-- User identity card representation -->
+    <div id="user-chip" class="user-chip" style="display: flex; align-items: center; gap: 10px; color: #ffffff;">
+      <div style="background: #2d6a4f; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
+        <i data-lucide="user" style="width: 16px; height: 16px; color: #fff;"></i>
       </div>
-      <nav id="nav-links">
-        <a href="#/dashboard" data-route="dashboard">Dashboard</a>
-        <a href="#/members" data-route="members">Members</a>
-        <a href="#/savings" data-route="savings">Savings</a>
-        <a href="#/loans" data-route="loans">Loans</a>
-        <a href="#/accounting" data-route="accounting">Accounting</a>
-        <a href="#/payroll" data-route="payroll">HR &amp; Payroll</a>
-        <a href="#/shares" data-route="shares">Shares</a>
-        <a href="#/groups" data-route="groups">Groups</a>
-        <a href="#/notifications" data-route="notifications">Notifications</a>
-        <a href="#/reports" data-route="reports">Reports &amp; Analytics</a>
-        <a href="#/risk" data-route="risk">Risk &amp; Compliance</a>
-        <a href="#/users" data-route="users">Users &amp; Audit</a>
-      </nav>
-      <div class="sidebar-footer">
-        <div id="user-chip" class="user-chip"></div>
-        <button id="logout-btn" class="btn btn-ghost btn-block">Log out</button>
+      <div style="display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis;">
+        <span style="font-size: 13px; font-weight: 600; white-space: nowrap;">Staff Administrator</span>
+        <span style="font-size: 11px; color: #8e9a94; white-space: nowrap;">admin@sacco.com</span>
       </div>
-    </aside>
+    </div>
+    
+    <!-- Ultra-readable log out button -->
+    <button id="logout-btn" class="btn btn-ghost btn-block" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 8px; font-size: 13px; font-weight: 500; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: #ff6b6b; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
+      <i data-lucide="log-out" style="width: 14px; height: 14px;"></i>
+      <span>Log out</span>
+    </button>
+  </div>
+</aside>
 
     <div class="main-col">
       <header class="topbar"
