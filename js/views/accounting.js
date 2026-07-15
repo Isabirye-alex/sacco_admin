@@ -2,27 +2,54 @@ import { api } from "../api.js";
 import { el, mount, formatMoney, titleCase, dataTable, openModal, showToast } from "../utils.js";
 
 let active = "trial-balance";
+let accountSearchQuery = "";
+let vendorSearchQuery = "";
+
+// --- Inline SVG Icons ---
+const ICONS = {
+  trialBalance: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>`,
+  chart: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>`,
+  journal: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>`,
+  dividends: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
+  vendors: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`,
+  settings: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`,
+  search: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>`,
+  plus: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>`,
+  trash: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>`
+};
 
 export async function renderAccounting(root) {
-  const tabs = el("div", { class: "tabs" }, [
-    tabButton("trial-balance", "Trial Balance", root),
-    tabButton("accounts", "Chart of Accounts Tree", root),
-    tabButton("journal", "New Journal Entry", root),
-    tabButton("dividends", "Dividend Calculator", root),
-    tabButton("vendors", "Vendor Management", root),
-    tabButton("gl-settings", "GL Settings", root)
+  injectGlobalStylesOnce();
+
+  const tabs = el("div", { class: "ac-tabs-container" }, [
+    tabButton("trial-balance", "Trial Balance", ICONS.trialBalance, root),
+    tabButton("accounts", "Chart of Accounts", ICONS.chart, root),
+    tabButton("journal", "Journal Entry", ICONS.journal, root),
+    tabButton("dividends", "Dividends", ICONS.dividends, root),
+    tabButton("vendors", "Vendors", ICONS.vendors, root),
+    tabButton("gl-settings", "GL Settings", ICONS.settings, root)
   ]);
-  const content = el("div", {});
+
+  const content = el("div", { class: "ac-tab-content-wrapper" });
   mount(root, [tabs, content]);
   await renderTabContent(content, root);
 }
 
-function tabButton(key, label, root) {
-  return el("button", { class: `tab ${active === key ? "active" : ""}`, onclick: async () => { active = key; await renderAccounting(root); } }, label);
+function tabButton(key, label, iconSvg, root) {
+  const btn = el("button", { 
+    class: `ac-tab-btn ${active === key ? "active" : ""}`, 
+    onclick: async () => { 
+      active = key; 
+      await renderAccounting(root); 
+    } 
+  });
+  btn.innerHTML = `${iconSvg} <span>${label}</span>`;
+  return btn;
 }
 
 async function renderTabContent(content, root) {
-  mount(content, el("div", { class: "spinner" }));
+  mount(content, [el("div", { class: "ac-spinner-container" }, [el("div", { class: "ac-spinner" })])]);
+  
   if (active === "accounts") await renderAccountsTab(content, root);
   else if (active === "journal") await renderJournalTab(content, root);
   else if (active === "dividends") await renderDividendsTab(content, root);
@@ -31,77 +58,127 @@ async function renderTabContent(content, root) {
   else await renderTrialBalanceTab(content);
 }
 
+// --- 1. Trial Balance Tab ---
 async function renderTrialBalanceTab(content) {
   const lines = await api.get("/api/v1/accounting/trial-balance");
-  const totalDebit = lines.reduce((s, l) => s + Number(l.debit), 0);
-  const totalCredit = lines.reduce((s, l) => s + Number(l.credit), 0);
+  const totalDebit = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+  const totalCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
 
   const table = dataTable(
     [
-      { header: "Code", render: (l) => l.account_code },
-      { header: "Account", render: (l) => l.account_name },
-      { header: "Debit", className: "ledger", render: (l) => `UGX ${formatMoney(l.debit)}` },
-      { header: "Credit", className: "ledger", render: (l) => `UGX ${formatMoney(l.credit)}` },
+      { header: "Account Code", render: (l) => el("span", { class: "ac-code-badge" }, l.account_code) },
+      { header: "Account Name", render: (l) => el("span", { style: "font-weight: 500; color: var(--pine-900);" }, l.account_name) },
+      { header: "Debit", className: "ledger", render: (l) => Number(l.debit) > 0 ? `UGX ${formatMoney(l.debit)}` : el("span", { class: "muted" }, "—") },
+      { header: "Credit", className: "ledger", render: (l) => Number(l.credit) > 0 ? `UGX ${formatMoney(l.credit)}` : el("span", { class: "muted" }, "—") },
     ],
     lines, "No posted journal activity yet."
   );
 
-  mount(content, el("div", { class: "card" }, [
-    el("h3", {}, "Trial balance"),
-    table,
-    el("div", { style: "display:flex;justify-content:flex-end;gap:24px;margin-top:14px;font-weight:600" }, [
-      el("span", { class: "ledger" }, `Total debit: UGX ${formatMoney(totalDebit)}`),
-      el("span", { class: "ledger" }, `Total credit: UGX ${formatMoney(totalCredit)}`),
+  const isBalanced = Math.abs(totalDebit - totalCredit) < 0.01;
+
+  mount(content, [el("div", { class: "ac-card ac-fade-in" }, [
+    el("div", { class: "ac-card-header" }, [
+      el("div", {}, [
+        el("h3", {}, "Trial Balance"),
+        el("p", { class: "muted small" }, "Double-entry validation ledger summary")
+      ]),
+      el("span", { class: `ac-status-badge ${isBalanced ? "success" : "warning"}` }, 
+        isBalanced ? "✓ Ledger Balanced" : "⚠ Ledger Unbalanced"
+      )
     ]),
-  ]));
+    table,
+    el("div", { class: "ac-summary-footer" }, [
+      el("span", {}, `Total Debit: UGX ${formatMoney(totalDebit)}`),
+      el("span", {}, `Total Credit: UGX ${formatMoney(totalCredit)}`),
+    ]),
+  ])]);
 }
 
-// 1. Chart of Accounts Tree View
+// --- 2. Chart of Accounts Tree (With real-time searching) ---
 async function renderAccountsTab(content, root) {
   const accounts = await api.get("/api/v1/accounting/accounts");
   
-  const header = el("div", { class: "card-header" }, [
-    el("h3", {}, "Chart of Accounts Tree View"),
-    el("button", { class: "btn btn-primary btn-sm", onclick: () => openAccountModal(content, root) }, "+ New Account"),
+  const searchInput = el("input", { 
+    class: "ac-search-input", 
+    placeholder: "Search accounts by code or name...", 
+    value: accountSearchQuery,
+    oninput: (e) => {
+      accountSearchQuery = e.target.value;
+      renderTree();
+    }
+  });
+
+  const header = el("div", { class: "ac-card-header-row" }, [
+    el("div", { class: "ac-search-wrapper" }, [
+      el("span", { class: "ac-search-icon" }, ICONS.search),
+      searchInput
+    ]),
+    el("button", { 
+      class: "ac-btn-primary", 
+      onclick: () => openAccountModal(content, root) 
+    }, [el("span", {}, ICONS.plus), el("span", {}, "New Account")]),
   ]);
 
-  // Group accounts by type for tree presentation
-  const types = ["asset", "liability", "equity", "income", "expense"];
-  const grouped = {};
-  types.forEach(t => { grouped[t] = accounts.filter(a => a.account_type === t); });
+  const treeWrapper = el("div", { class: "ac-fade-in" });
 
-  const treeContent = el("div", { style: "margin-top: 15px;" }, 
-    types.map(t => {
-      const children = grouped[t] || [];
-      return el("div", { class: "card", style: "margin-bottom: 12px; border-left: 4px solid var(--pine-600);" }, [
-        el("div", { style: "font-weight: bold; font-size: 15px; color: var(--pine-900); display: flex; align-items: center; gap: 8px;" }, [
-          el("span", {}, "📁"),
-          el("span", {}, `${titleCase(t)} Accounts (${children.length})`)
-        ]),
-        children.length 
-          ? el("ul", { style: "list-style: none; padding-left: 20px; margin-top: 8px; margin-bottom: 0;" }, 
-              children.map(a => el("li", { style: "padding: 6px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between;" }, [
-                el("span", {}, `${a.code} — ${a.name}`),
-                el("span", { class: "muted small" }, titleCase(a.account_type))
-              ]))
-            )
-          : el("div", { class: "muted small", style: "padding-left: 20px; margin-top: 5px;" }, "No accounts registered under this classification.")
-      ]);
-    })
-  );
+  function renderTree() {
+    const query = accountSearchQuery.toLowerCase().trim();
+    const filtered = accounts.filter(a => 
+      a.code.toLowerCase().includes(query) || 
+      a.name.toLowerCase().includes(query)
+    );
 
-  mount(content, [header, treeContent]);
+    const types = ["asset", "liability", "equity", "income", "expense"];
+    const grouped = {};
+    types.forEach(t => { 
+      grouped[t] = filtered.filter(a => a.account_type === t); 
+    });
+
+    const treeContent = el("div", { class: "ac-tree" }, 
+      types.map(t => {
+        const children = grouped[t] || [];
+        if (query && children.length === 0) return null;
+
+        return el("div", { class: "ac-tree-node" }, [
+          el("div", { class: "ac-tree-node-header" }, [
+            el("span", { class: "ac-tree-icon" }, "📁"),
+            el("span", { class: "ac-tree-label" }, `${titleCase(t)} Accounts`),
+            el("span", { class: "ac-badge-count" }, children.length)
+          ]),
+          children.length 
+            ? el("ul", { class: "ac-tree-list" }, 
+                children.map(a => el("li", { class: "ac-tree-item ac-fade-in" }, [
+                  el("div", { style: "display: flex; align-items: center; gap: 12px;" }, [
+                    el("span", { class: "ac-code-badge" }, a.code),
+                    el("span", { class: "ac-tree-item-name" }, a.name)
+                  ]),
+                  el("span", { class: "ac-status-badge secondary" }, titleCase(a.account_type))
+                ]))
+              )
+            : el("div", { class: "ac-tree-empty" }, "No accounts registered.")
+        ]);
+      }).filter(Boolean)
+    );
+
+    mount(treeWrapper, [treeContent]);
+  }
+
+  renderTree();
+  mount(content, [header, treeWrapper]);
+  setTimeout(() => searchInput.focus(), 50);
 }
 
 function openAccountModal(content, root) {
-  openModal("New chart of account", (closeFn) => {
+  openModal("New Chart of Account", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const form = el("form", {}, [
-      el("div", { class: "field" }, [el("label", {}, "Code"), el("input", { id: "coa-code", required: true })]),
-      el("div", { class: "field" }, [el("label", {}, "Name"), el("input", { id: "coa-name", required: true })]),
-      el("div", { class: "field" }, [
+    
+    // SPREAD options array below to make sure children are flat elements
+    const form = el("form", { class: "ac-form" }, [
+      el("div", { class: "ac-field" }, [el("label", {}, "Code"), el("input", { id: "coa-code", placeholder: "e.g. 1010", required: true })}),
+      el("div", { class: "ac-field" }, [el("label", {}, "Name"), el("input", { id: "coa-name", placeholder: "e.g. Cash in Hand", required: true })}),
+      el("div", { class: "ac-field" }, [
         el("label", {}, "Type"),
-        el("select", { id: "coa-type" }, ["asset", "liability", "equity", "income", "expense"].map((t) => el("option", { value: t }, titleCase(t)))),
+        el("select", { id: "coa-type" }, ...["asset", "liability", "equity", "income", "expense"].map((t) => el("option", { value: t }, titleCase(t)))),
       ]),
       errorEl,
       el("div", { class: "modal-actions" }, [
@@ -109,6 +186,7 @@ function openAccountModal(content, root) {
         el("button", { type: "submit", class: "btn btn-primary" }, "Create"),
       ]),
     ]);
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorEl.hidden = true;
@@ -118,9 +196,10 @@ function openAccountModal(content, root) {
           name: form.querySelector("#coa-name").value,
           account_type: form.querySelector("#coa-type").value,
         });
-        showToast("Account created.", "success");
-        closeFn();
+        showToast("Account created successfully.", "success");
+        // Update content/DOM state BEFORE modal closes and is fully unmounted
         await renderTabContent(content, root);
+        closeFn();
       } catch (err) {
         errorEl.textContent = err.message;
         errorEl.hidden = false;
@@ -130,33 +209,51 @@ function openAccountModal(content, root) {
   });
 }
 
-// 2. Journal Entry Builder
+// --- 3. Modern Journal Entry Builder ---
 async function renderJournalTab(content, root) {
   const accounts = await api.get("/api/v1/accounting/accounts");
   if (!accounts.length) {
-    mount(content, el("div", { class: "card empty-state" }, [
-      el("h4", {}, "No chart of accounts yet"),
-      el("p", {}, "Create at least two accounts on the Chart of Accounts tab before posting a journal entry."),
-    ]));
+    mount(content, [el("div", { class: "ac-card ac-empty-state ac-fade-in" }, [
+      el("h4", {}, "No Chart of Accounts yet"),
+      el("p", { class: "muted" }, "Create at least two accounts on the Chart of Accounts tab first."),
+    ])]);
     return;
   }
 
-  const linesHolder = el("div", {});
-  const narrativeInput = el("input", { id: "je-narrative" });
+  const linesHolder = el("div", { class: "ac-je-lines-container" });
+  const narrativeInput = el("input", { id: "je-narrative", placeholder: "Explain this transaction..." });
   const errorEl = el("p", { class: "form-error", hidden: true });
-  const balanceIndicator = el("p", { class: "muted small" });
+  const balanceIndicator = el("div", { class: "ac-je-balance-bar" });
 
   function accountOptions() {
     return accounts.map((a) => el("option", { value: a.id }, `${a.code} — ${a.name}`));
   }
 
   function addLine() {
-    const row = el("div", { class: "je-line-row", style: "display: flex; gap: 8px; margin-bottom: 8px; align-items: center;" }, [
-      el("select", { class: "je-account", style: "flex: 2;" }, accountOptions()),
-      el("input", { class: "je-debit", type: "number", placeholder: "Debit", step: "0.01", style: "flex: 1;", oninput: updateBalance }),
-      el("input", { class: "je-credit", type: "number", placeholder: "Credit", step: "0.01", style: "flex: 1;", oninput: updateBalance }),
-      el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: () => { row.remove(); updateBalance(); } }, "✕"),
+    const row = el("div", { class: "ac-je-row ac-slide-up" }, [
+      el("div", { style: "flex: 2;" }, [
+        el("select", { class: "je-account ac-input" }, ...accountOptions())
+      ]),
+      el("div", { style: "flex: 1;" }, [
+        el("input", { class: "je-debit ac-input", type: "number", placeholder: "Debit Amount", step: "0.01", oninput: updateBalance })
+      ]),
+      el("div", { style: "flex: 1;" }, [
+        el("input", { class: "je-credit ac-input", type: "number", placeholder: "Credit Amount", step: "0.01", oninput: updateBalance })
+      ]),
+      el("button", { 
+        type: "button", 
+        class: "ac-btn-icon-danger", 
+        onclick: () => { 
+          row.style.opacity = 0;
+          row.style.transform = "scale(0.95)";
+          setTimeout(() => {
+            row.remove(); 
+            updateBalance(); 
+          }, 150);
+        } 
+      }, []);
     ]);
+    row.querySelector(".ac-btn-icon-danger").innerHTML = ICONS.trash;
     linesHolder.appendChild(row);
     updateBalance();
   }
@@ -168,25 +265,35 @@ async function renderJournalTab(content, root) {
       debit += Number(r.querySelector(".je-debit").value || 0);
       credit += Number(r.querySelector(".je-credit").value || 0);
     });
-    const balanced = debit === credit && debit > 0;
-    balanceIndicator.textContent = `Debit: UGX ${formatMoney(debit)}  ·  Credit: UGX ${formatMoney(credit)}  ${balanced ? "✓ Balanced" : "— Not yet balanced"}`;
-    balanceIndicator.style.color = balanced ? "var(--pine-700)" : "var(--warn)";
+    const balanced = Math.abs(debit - credit) < 0.01 && debit > 0;
+    
+    balanceIndicator.innerHTML = `
+      <div style="display: flex; gap: 16px;">
+        <span>Debit: <strong>UGX ${formatMoney(debit)}</strong></span>
+        <span>Credit: <strong>UGX ${formatMoney(credit)}</strong></span>
+      </div>
+      <span class="ac-status-badge ${balanced ? "success" : "warning"}">
+        ${balanced ? "✓ Balanced" : "⚠ Not Balanced"}
+      </span>
+    `;
   }
 
   addLine();
   addLine();
 
-  const form = el("form", {}, [
-    el("div", { class: "field" }, [el("label", {}, "Narrative"), narrativeInput]),
-    el("div", { class: "field" }, [
-      el("label", {}, "Lines"),
+  const form = el("form", { class: "ac-form" }, [
+    el("div", { class: "ac-field" }, [el("label", {}, "Narrative / Memorandum Description"), narrativeInput]),
+    el("div", { class: "ac-field" }, [
+      el("div", { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;" }, [
+        el("label", { style: "margin: 0;" }, "Transaction Split Lines"),
+        el("button", { type: "button", class: "ac-btn-secondary btn-sm", onclick: addLine }, "+ Add Split Line")
+      ]),
       linesHolder,
-      el("button", { type: "button", class: "btn btn-secondary btn-sm", onclick: addLine }, "+ Add line"),
     ]),
     balanceIndicator,
     errorEl,
-    el("div", { class: "modal-actions", style: "justify-content:flex-start" }, [
-      el("button", { type: "submit", class: "btn btn-primary" }, "Post journal entry"),
+    el("div", { class: "modal-actions", style: "justify-content: flex-start; margin-top: 24px;" }, [
+      el("button", { type: "submit", class: "ac-btn-primary" }, "Post Journal Entry"),
     ]),
   ]);
 
@@ -202,7 +309,7 @@ async function renderJournalTab(content, root) {
 
     try {
       await api.post("/api/v1/accounting/journal-entries", { narrative: narrativeInput.value || null, lines });
-      showToast("Journal entry posted.", "success");
+      showToast("Journal entry successfully posted.", "success");
       active = "trial-balance";
       await renderAccounting(root);
     } catch (err) {
@@ -211,24 +318,32 @@ async function renderJournalTab(content, root) {
     }
   });
 
-  mount(content, el("div", { class: "card" }, [el("h3", {}, "New journal entry"), form]));
+  mount(content, [el("div", { class: "ac-card ac-fade-in" }, [
+    el("div", { class: "ac-card-header" }, [
+      el("div", {}, [
+        el("h3", {}, "New Journal Entry"),
+        el("p", { class: "muted small" }, "Post manual balanced Double-Entry Ledger adjustments")
+      ])
+    ]),
+    form
+  ])]);
 }
 
-// 3. Calculate Dividends script runner
+// --- 4. Dividend Calculator ---
 async function renderDividendsTab(content, root) {
   const errorEl = el("p", { class: "form-error", hidden: true });
-  const resultHolder = el("div", { style: "margin-top:16px" });
+  const resultHolder = el("div", { class: "ac-slide-up", style: "margin-top:20px" });
 
   const yearInput = el("input", { id: "dv-year", placeholder: "e.g. 2025", required: true });
-  const rateInput = el("input", { id: "dv-rate", type: "number", step: "0.0001", required: true });
+  const rateInput = el("input", { id: "dv-rate", type: "number", step: "0.0001", placeholder: "Rate per weight", required: true });
 
-  const form = el("form", {}, [
+  const form = el("form", { class: "ac-form" }, [
     el("div", { class: "field-row" }, [
-      el("div", { class: "field" }, [el("label", {}, "Financial year"), yearInput]),
-      el("div", { class: "field" }, [el("label", {}, "Dividend Rate (UGX per Share Weight)"), rateInput]),
+      el("div", { class: "ac-field" }, [el("label", {}, "Financial Year"), yearInput]),
+      el("div", { class: "ac-field" }, [el("label", {}, "Dividend Rate (UGX per Share Weight)"), rateInput]),
     ]),
     errorEl,
-    el("button", { type: "submit", class: "btn btn-primary" }, "Run Dividend Calculations"),
+    el("button", { type: "submit", class: "ac-btn-primary", style: "width: fit-content;" }, "Run Calculations"),
   ]);
 
   form.addEventListener("submit", async (e) => {
@@ -239,14 +354,14 @@ async function renderDividendsTab(content, root) {
         financial_year: yearInput.value,
         rate_per_share: Number(rateInput.value),
       });
-      showToast("Dividends computed and distributed.", "success");
-      mount(resultHolder, el("div", { class: "card", style: "border: 1px solid var(--pine-300)" }, [
-        el("h3", {}, "Dividend Calculation Summary"),
-        el("p", {}, `Calculations processed based on financial year weights:`),
+      showToast("Dividends successfully computed and distributed.", "success");
+      mount(resultHolder, [el("div", { class: "ac-card success", style: "border-left: 4px solid var(--emerald-500);" }, [
+        el("h3", { style: "color: var(--emerald-800);" }, "✓ Calculation Complete"),
+        el("p", { class: "muted small" }, `Calculations processed based on financial year ${yearInput.value}:`),
         infoRow("Total Disbursed Sum", `UGX ${formatMoney(result.total_amount)}`),
         infoRow("Member Accounts Paid", `${result.members_paid} accounts`),
-        infoRow("Rate Applied", `UGX ${rateInput.value} per share unit`)
-      ]));
+        infoRow("Rate Applied", `UGX ${rateInput.value} per unit`)
+      ])]);
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
@@ -254,26 +369,28 @@ async function renderDividendsTab(content, root) {
   });
 
   mount(content, [
-    el("div", { class: "card" }, [
-      el("h3", {}, "Calculate & Disburse Dividends"),
-      el("p", { class: "muted" }, "Declare and credit member share accounts automatically based on share ownership weights. Review weights before final submission."),
+    el("div", { class: "ac-card ac-fade-in" }, [
+      el("div", { class: "ac-card-header" }, [
+        el("div", {}, [
+          el("h3", {}, "Calculate & Disburse Dividends"),
+          el("p", { class: "muted small" }, "Automatically credit member ledger weightings.")
+        ])
+      ]),
       form,
     ]),
     resultHolder,
   ]);
 }
 
-// Helper info row
 function infoRow(label, val) {
-  return el("div", { style: "display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line);" }, [
+  return el("div", { class: "ac-info-row" }, [
     el("span", { class: "muted" }, label),
-    el("span", { style: "font-weight: 600" }, val)
+    el("span", { style: "font-weight: 600; color: var(--pine-900);" }, val)
   ]);
 }
 
-// 4. Manage Vendors/Suppliers
+// --- 5. Vendor & Supplies Manager (With Search Filters) ---
 async function renderVendorsTab(content, root) {
-  // Load vendors from localStorage for state permanence
   let vendors = JSON.parse(localStorage.getItem("sacco_vendors") || "[]");
   if (!vendors.length) {
     vendors = [
@@ -285,43 +402,77 @@ async function renderVendorsTab(content, root) {
 
   const accounts = await api.get("/api/v1/accounting/accounts").catch(() => []);
 
-  const header = el("div", { class: "card-header" }, [
-    el("h3", {}, "Vendors & Suppliers Registry"),
-    el("button", { class: "btn btn-primary btn-sm", onclick: () => openVendorModal(content, root) }, "+ Register Vendor"),
+  const searchInput = el("input", { 
+    class: "ac-search-input", 
+    placeholder: "Search vendors by name...", 
+    value: vendorSearchQuery,
+    oninput: (e) => {
+      vendorSearchQuery = e.target.value;
+      renderVendorList();
+    }
+  });
+
+  const header = el("div", { class: "ac-card-header-row" }, [
+    el("div", { class: "ac-search-wrapper" }, [
+      el("span", { class: "ac-search-icon" }, ICONS.search),
+      searchInput
+    ]),
+    el("button", { 
+      class: "ac-btn-primary", 
+      onclick: () => openVendorModal(content, root) 
+    }, [el("span", {}, ICONS.plus), el("span", {}, "Register Vendor")]),
   ]);
 
-  const table = dataTable(
-    [
-      { header: "Vendor Name", render: (v) => v.name },
-      { header: "Contact Person", render: (v) => v.contact },
-      { header: "Phone", render: (v) => v.phone },
-      { header: "Email", render: (v) => v.email },
-      {
-        header: "",
-        render: (v) => el("button", { class: "btn btn-secondary btn-sm", onclick: () => payVendorBillModal(v, accounts) }, "Pay Vendor Invoice")
-      }
-    ],
-    vendors
-  );
+  const tableWrapper = el("div", { class: "ac-fade-in" });
 
-  mount(content, [header, el("div", { class: "card" }, [table])]);
+  function renderVendorList() {
+    const query = vendorSearchQuery.toLowerCase().trim();
+    const filteredVendors = vendors.filter(v => 
+      v.name.toLowerCase().includes(query) || 
+      v.contact.toLowerCase().includes(query)
+    );
+
+    const table = dataTable(
+      [
+        { header: "Vendor Name", render: (v) => el("span", { style: "font-weight: 600; color: var(--pine-900);" }, v.name) },
+        { header: "Contact Person", render: (v) => v.contact },
+        { header: "Phone", render: (v) => v.phone },
+        { header: "Email", render: (v) => el("span", { class: "muted small" }, v.email) },
+        {
+          header: "",
+          render: (v) => el("button", { 
+            class: "ac-btn-secondary btn-sm", 
+            onclick: () => payVendorBillModal(v, accounts) 
+          }, "Pay Invoice")
+        }
+      ],
+      filteredVendors,
+      "No matching vendors found."
+    );
+
+    mount(tableWrapper, [el("div", { class: "ac-card" }, [table])]);
+  }
+
+  renderVendorList();
+  mount(content, [header, tableWrapper]);
+  setTimeout(() => searchInput.focus(), 50);
 }
 
 function openVendorModal(content, root) {
   openModal("Register New Vendor", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const nameInput = el("input", { required: true });
-    const contactInput = el("input");
-    const phoneInput = el("input");
-    const emailInput = el("input", { type: "email" });
+    const nameInput = el("input", { placeholder: "Company Name", required: true });
+    const contactInput = el("input", { placeholder: "Primary Contact Account Manager" });
+    const phoneInput = el("input", { placeholder: "+256..." });
+    const emailInput = el("input", { type: "email", placeholder: "billing@company.com" });
 
-    const form = el("form", {}, [
-      el("div", { class: "field" }, [el("label", {}, "Vendor / Supplier Name"), nameInput]),
+    const form = el("form", { class: "ac-form" }, [
+      el("div", { class: "ac-field" }, [el("label", {}, "Vendor / Supplier Name"), nameInput]),
       el("div", { class: "field-row" }, [
-        el("div", { class: "field" }, [el("label", {}, "Contact Person"), contactInput]),
-        el("div", { class: "field" }, [el("label", {}, "Phone"), phoneInput])
+        el("div", { class: "ac-field" }, [el("label", {}, "Contact Person"), contactInput]),
+        el("div", { class: "ac-field" }, [el("label", {}, "Phone Number"), phoneInput])
       ]),
-      el("div", { class: "field" }, [el("label", {}, "Email Address"), emailInput]),
+      el("div", { class: "ac-field" }, [el("label", {}, "Email Address"), emailInput]),
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
@@ -329,7 +480,7 @@ function openVendorModal(content, root) {
       ])
     ]);
 
-    form.addEventListener("submit", (e) => {
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const list = JSON.parse(localStorage.getItem("sacco_vendors") || "[]");
       list.push({
@@ -340,43 +491,43 @@ function openVendorModal(content, root) {
         email: emailInput.value || "—"
       });
       localStorage.setItem("sacco_vendors", JSON.stringify(list));
-      showToast("Vendor registered.", "success");
+      showToast("Vendor successfully registered.", "success");
+      
+      // Update DOM context tree states before unmounting
+      await renderVendorsTab(content, root);
       closeFn();
-      renderVendorsTab(content, root);
     });
 
     return [form];
   });
 }
 
-// Post matching double entry journal for vendor bill payout
 function payVendorBillModal(vendor, accounts) {
-  openModal(`Pay Vendor — ${vendor.name}`, (closeFn) => {
+  openModal(`Payout Invoice — ${vendor.name}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const amountInput = el("input", { type: "number", required: true, min: "1", placeholder: "Amount to disburse" });
-    const invoiceInput = el("input", { placeholder: "e.g. BILL-UMEME-4821" });
+    const amountInput = el("input", { type: "number", required: true, min: "1", placeholder: "UGX Amount" });
+    const invoiceInput = el("input", { placeholder: "Invoice identifier string" });
 
-    // Filter cash and expense accounts for simple selection
     const assetAccounts = accounts.filter(a => a.account_type === "asset");
     const expenseAccounts = accounts.filter(a => a.account_type === "expense");
 
-    const assetSelect = el("select", {}, assetAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
-    const expenseSelect = el("select", {}, expenseAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
+    // SPREAD maps inside el(...) creation wrappers
+    const assetSelect = el("select", { class: "ac-input" }, ...assetAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
+    const expenseSelect = el("select", { class: "ac-input" }, ...expenseAccounts.map(a => el("option", { value: a.id }, `${a.code} — ${a.name}`)));
 
-    const form = el("form", {}, [
-      el("p", { class: "muted" }, "Post invoice disbursement directly into the general ledger."),
+    const form = el("form", { class: "ac-form" }, [
       el("div", { class: "field-row" }, [
-        el("div", { class: "field" }, [el("label", {}, "Expense Account (Debit)"), expenseSelect]),
-        el("div", { class: "field" }, [el("label", {}, "Asset Account (Credit)"), assetSelect])
+        el("div", { class: "ac-field" }, [el("label", {}, "Expense Account (Dr.)"), expenseSelect]),
+        el("div", { class: "ac-field" }, [el("label", {}, "Asset/Clearing Account (Cr.)"), assetSelect])
       ]),
       el("div", { class: "field-row" }, [
-        el("div", { class: "field" }, [el("label", {}, "Payment Amount"), amountInput]),
-        el("div", { class: "field" }, [el("label", {}, "Invoice / Bill Number"), invoiceInput])
+        el("div", { class: "ac-field" }, [el("label", {}, "Amount"), amountInput]),
+        el("div", { class: "ac-field" }, [el("label", {}, "Invoice / Bill Number"), invoiceInput])
       ]),
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
-        el("button", { type: "submit", class: "btn btn-primary" }, "Post Vendor Payment")
+        el("button", { type: "submit", class: "btn btn-primary" }, "Post Payment Ledger")
       ])
     ]);
 
@@ -386,13 +537,13 @@ function payVendorBillModal(vendor, accounts) {
       const amt = Number(amountInput.value);
       try {
         await api.post("/api/v1/accounting/journal-entries", {
-          narrative: `Vendor Payout to ${vendor.name} (Invoice: ${invoiceInput.value || "OTC"})`,
+          narrative: `Vendor Payout: ${vendor.name} (Invoice: ${invoiceInput.value || "OTC"})`,
           lines: [
             { account_id: expenseSelect.value, debit: amt, credit: 0 },
             { account_id: assetSelect.value, debit: 0, credit: amt }
           ]
         });
-        showToast("Vendor payment posted to general ledger successfully.", "success");
+        showToast("Vendor transaction logged successfully.", "success");
         closeFn();
       } catch (err) {
         errorEl.textContent = err.message;
@@ -404,7 +555,7 @@ function payVendorBillModal(vendor, accounts) {
   });
 }
 
-// 5. GL Settings Tab
+// --- 6. GL Settings Tab ---
 async function renderGlSettingsTab(content, root) {
   const [settings, accounts] = await Promise.all([
     api.get("/api/v1/accounting/gl-settings"),
@@ -412,32 +563,32 @@ async function renderGlSettingsTab(content, root) {
   ]);
 
   if (!accounts.length) {
-    mount(content, el("div", { class: "card empty-state" }, [
-      el("h4", {}, "No chart of accounts yet"),
-      el("p", {}, "Create your cash, mobile money, and interest income accounts first."),
-    ]));
+    mount(content, [el("div", { class: "ac-card ac-empty-state" }, [
+      el("h4", {}, "No Chart of Accounts yet"),
+      el("p", { class: "muted" }, "Create cash, mobile money, and interest accounts first."),
+    ])]);
     return;
   }
 
   const errorEl = el("p", { class: "form-error", hidden: true });
 
   function accountSelect(id, currentValue) {
-    return el("select", { id }, [
-      el("option", { value: "" }, "— Not configured —"),
-      ...accounts.map((a) => el("option", { value: a.id, selected: a.id === currentValue }, `${a.code} — ${a.name}`)),
-    ]);
+    return el("select", { id }, 
+      el("option", { value: "" }, "— Select system parameter target —"),
+      ...accounts.map((a) => el("option", { value: a.id, selected: a.id === currentValue }, `${a.code} — ${a.name}`))
+    );
   }
 
   const cashSelect = accountSelect("gl-cash", settings.cash_account_id);
   const mmSelect = accountSelect("gl-mm", settings.mobile_money_account_id);
   const interestSelect = accountSelect("gl-interest", settings.interest_income_account_id);
 
-  const form = el("form", {}, [
-    el("div", { class: "field" }, [el("label", {}, "Cash / till account"), cashSelect]),
-    el("div", { class: "field" }, [el("label", {}, "Mobile money clearing account"), mmSelect]),
-    el("div", { class: "field" }, [el("label", {}, "Interest income account"), interestSelect]),
+  const form = el("form", { class: "ac-form" }, [
+    el("div", { class: "ac-field" }, [el("label", {}, "Primary Cash / Vault Till"), cashSelect]),
+    el("div", { class: "ac-field" }, [el("label", {}, "Mobile Money Clearing Account"), mmSelect]),
+    el("div", { class: "ac-field" }, [el("label", {}, "Accrued Share Interest Account"), interestSelect]),
     errorEl,
-    el("button", { type: "submit", class: "btn btn-primary" }, "Save GL settings"),
+    el("button", { type: "submit", class: "ac-btn-primary", style: "width: fit-content;" }, "Save Configuration"),
   ]);
 
   form.addEventListener("submit", async (e) => {
@@ -449,7 +600,7 @@ async function renderGlSettingsTab(content, root) {
         mobile_money_account_id: mmSelect.value || null,
         interest_income_account_id: interestSelect.value || null,
       });
-      showToast("GL settings saved.", "success");
+      showToast("Settings updated.", "success");
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
@@ -457,9 +608,377 @@ async function renderGlSettingsTab(content, root) {
   });
 
   mount(content, [
-    el("div", { class: "card" }, [
-      el("h3", {}, "General ledger settings"),
+    el("div", { class: "ac-card ac-fade-in" }, [
+      el("div", { class: "ac-card-header" }, [
+        el("div", {}, [
+          el("h3", {}, "System Ledger Routing Maps"),
+          el("p", { class: "muted small" }, "Assign auto-transaction hooks to physical ledger structures")
+        ])
+      ]),
       form,
     ]),
   ]);
+}
+
+// --- CSS Injector System ---
+function injectGlobalStylesOnce() {
+  if (document.getElementById("accounting-global-styles")) return;
+  const style = el("style", { id: "accounting-global-styles" });
+  style.textContent = `
+    /* Layout & Navigation Tab-bar */
+    .ac-tabs-container {
+      display: flex;
+      gap: 6px;
+      background: #f1f5f9;
+      padding: 6px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .ac-tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: transparent;
+      border: none;
+      color: #64748b;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      white-space: nowrap;
+    }
+    .ac-tab-btn:hover {
+      background: rgba(0, 0, 0, 0.04);
+      color: #0f172a;
+    }
+    .ac-tab-btn.active {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      transform: translateY(-1px);
+    }
+    .ac-tab-content-wrapper {
+      min-height: 250px;
+    }
+
+    /* Cards & Containers */
+    .ac-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+    }
+    .ac-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .ac-card-header h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 4px 0;
+      color: #0f172a;
+    }
+
+    /* Modern Dynamic Search Rows */
+    .ac-card-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .ac-search-wrapper {
+      position: relative;
+      flex: 1;
+      max-width: 400px;
+    }
+    .ac-search-input {
+      width: 100%;
+      padding: 10px 12px 10px 40px;
+      font-size: 14px;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 10px;
+      outline: none;
+      transition: all 0.15s ease;
+    }
+    .ac-search-input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    }
+    .ac-search-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #94a3b8;
+      display: flex;
+    }
+
+    /* Buttons */
+    .ac-btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #0f172a;
+      color: #ffffff;
+      border: none;
+      font-weight: 600;
+      font-size: 14px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .ac-btn-primary:hover {
+      background: #1e293b;
+      transform: translateY(-1px);
+    }
+    .ac-btn-primary:active {
+      transform: translateY(1px);
+    }
+    .ac-btn-secondary {
+      background: #f8fafc;
+      color: #334155;
+      border: 1.5px solid #e2e8f0;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .ac-btn-secondary:hover {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+    }
+    .ac-btn-icon-danger {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      background: #fff1f2;
+      border: none;
+      color: #f43f5e;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .ac-btn-icon-danger:hover {
+      background: #ffe4e6;
+    }
+
+    /* Tree View Structuring */
+    .ac-tree {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .ac-tree-node {
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    .ac-tree-node-header {
+      display: flex;
+      align-items: center;
+      background: #f8fafc;
+      padding: 14px 20px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .ac-tree-icon {
+      font-size: 16px;
+      margin-right: 8px;
+    }
+    .ac-tree-label {
+      font-weight: 700;
+      color: #1e293b;
+    }
+    .ac-badge-count {
+      margin-left: 10px;
+      background: #e2e8f0;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 100px;
+    }
+    .ac-tree-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .ac-tree-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .ac-tree-item:last-child {
+      border-bottom: none;
+    }
+    .ac-tree-item-name {
+      font-weight: 500;
+      color: #334155;
+    }
+    .ac-tree-empty {
+      padding: 16px 20px;
+      color: #94a3b8;
+      font-size: 13px;
+    }
+
+    /* Modern Badges & Helpers */
+    .ac-code-badge {
+      font-family: monospace;
+      font-weight: 700;
+      background: #f1f5f9;
+      color: #475569;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .ac-status-badge {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 100px;
+    }
+    .ac-status-badge.success {
+      background: #ecfdf5;
+      color: #059669;
+    }
+    .ac-status-badge.warning {
+      background: #fffbeb;
+      color: #d97706;
+    }
+    .ac-status-badge.secondary {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
+    /* Forms */
+    .ac-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .ac-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ac-field label {
+      font-weight: 600;
+      color: #475569;
+      font-size: 13px;
+    }
+    .ac-form input, .ac-form select {
+      padding: 10px 14px;
+      font-size: 14px;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 10px;
+      outline: none;
+      transition: all 0.15s ease;
+    }
+    .ac-form input:focus, .ac-form select:focus {
+      border-color: #3b82f6;
+    }
+
+    /* Journal Entry Dynamic Lines */
+    .ac-je-lines-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 350px;
+      overflow-y: auto;
+      padding: 4px;
+    }
+    .ac-je-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      transition: all 0.15s ease;
+    }
+    .ac-je-row select {
+      width: 100%;
+    }
+    .ac-je-balance-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #f8fafc;
+      padding: 14px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      border: 1px dashed #cbd5e1;
+      margin-top: 14px;
+    }
+
+    /* Table & Totals Footer styling */
+    .ac-summary-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 32px;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #f1f5f9;
+      font-weight: 700;
+      font-size: 15px;
+      color: #0f172a;
+    }
+    .ac-info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 14px;
+    }
+
+    /* Loading Spinner */
+    .ac-spinner-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 40px;
+    }
+    .ac-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #0f172a;
+      border-radius: 50%;
+      animation: ac-spin 0.6s linear infinite;
+    }
+
+    /* Micro Animations */
+    @keyframes ac-spin {
+      to { transform: rotate(360deg); }
+    }
+    .ac-fade-in {
+      animation: acFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .ac-slide-up {
+      animation: acSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes acFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes acSlideUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `;
+  document.head.appendChild(style);
 }
