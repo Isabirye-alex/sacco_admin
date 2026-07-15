@@ -4,6 +4,23 @@ import {
   openModal, confirmDialog, showToast, memberPicker
 } from "../utils.js";
 
+// Load Lucide Icons dynamically from a reliable CDN
+if (!window.lucide) {
+  const script = document.createElement("script");
+  script.src = "https://unpkg.com/lucide@latest";
+  script.onload = () => {
+    if (window.lucide) window.lucide.createIcons();
+  };
+  document.head.appendChild(script);
+}
+
+// Utility to safely trigger Lucide icon rendering after DOM updates
+function refreshIcons() {
+  if (window.lucide) {
+    setTimeout(() => window.lucide.createIcons(), 10);
+  }
+}
+
 const state = { page: 1, pageSize: 15, q: "", status: "", selectedId: null };
 
 export async function renderMembers(root) {
@@ -22,7 +39,6 @@ async function renderList(root) {
 
   const data = await api.get(`/api/v1/members?${params.toString()}`);
 
-  // Fetch balances in parallel for the current page only
   const itemsWithBalances = await Promise.all(
     (data.items || []).map(async (m) => {
       try {
@@ -31,7 +47,6 @@ async function renderList(root) {
           api.get(`/api/v1/shares/members/${m.id}/holdings`).catch(() => [])
         ]);
         const savingsBalance = accounts.reduce((sum, a) => sum + Number(a.balance || 0), 0);
-        // Assuming share nominal value is 10,000 UGX
         const shareCount = holdings.reduce((sum, h) => sum + Number(h.number_of_shares || 0), 0);
         const shareBalance = shareCount * 10000; 
         return { ...m, savingsBalance, shareBalance };
@@ -42,11 +57,15 @@ async function renderList(root) {
   );
 
   const toolbar = el("div", { class: "toolbar", style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap;" }, [
-    el("input", {
-      class: "search-input", type: "text", placeholder: "Search name, member number, national ID\u2026",
-      value: state.q,
-      oninput: debounce((e) => { state.q = e.target.value; state.page = 1; renderMembers(root); }, 350),
-    }),
+    el("div", { style: "position: relative; display: flex; align-items: center;" }, [
+      el("i", { "data-lucide": "search", style: "position: absolute; left: 10px; width: 16px; height: 16px; color: #888;" }),
+      el("input", {
+        class: "search-input", type: "text", placeholder: "Search name, ID\u2026",
+        style: "padding-left: 32px;",
+        value: state.q,
+        oninput: debounce((e) => { state.q = e.target.value; state.page = 1; renderMembers(root); }, 350),
+      })
+    ]),
     el(
       "select",
       { onchange: (e) => { state.status = e.target.value; state.page = 1; renderMembers(root); } },
@@ -54,8 +73,14 @@ async function renderList(root) {
         el("option", { value: s, selected: s === state.status }, s ? titleCase(s) : "All statuses")
       )
     ),
-    el("button", { class: "btn btn-primary", onclick: () => openCreateMemberModal(root) }, "+ Add member"),
-    el("button", { class: "btn btn-secondary", onclick: () => openBulkUploadModal(root) }, "Bulk Upload CSV")
+    el("button", { class: "btn btn-primary", style: "display: flex; align-items: center; gap: 6px;", onclick: () => openCreateMemberModal(root) }, [
+      el("i", { "data-lucide": "plus", style: "width: 16px; height: 16px;" }),
+      el("span", {}, "Add member")
+    ]),
+    el("button", { class: "btn btn-secondary", style: "display: flex; align-items: center; gap: 6px;", onclick: () => openBulkUploadModal(root) }, [
+      el("i", { "data-lucide": "upload", style: "width: 16px; height: 16px;" }),
+      el("span", {}, "Bulk Upload CSV")
+    ])
   ]);
 
   const table = dataTable(
@@ -81,6 +106,7 @@ async function renderList(root) {
 
   const card = el("div", { class: "card" }, [table]);
   mount(root, [toolbar, card, paginationBar(data.page, data.page_size, data.total, (p) => { state.page = p; renderMembers(root); })]);
+  refreshIcons();
 }
 
 async function renderDetail(root, memberId) {
@@ -91,13 +117,20 @@ async function renderDetail(root, memberId) {
     api.get(`/api/v1/shares/members/${memberId}/holdings`).catch(() => []),
   ]);
 
-  const backBtn = el("button", { class: "detail-back", onclick: () => { state.selectedId = null; renderMembers(root); } }, "\u2190 Back to members");
+  const backBtn = el("button", { 
+    class: "detail-back", 
+    style: "display: flex; align-items: center; gap: 6px; background: none; border: none; cursor: pointer; color: var(--pine-700); font-weight: 500;",
+    onclick: () => { state.selectedId = null; renderMembers(root); } 
+  }, [
+    el("i", { "data-lucide": "arrow-left", style: "width: 16px; height: 16px;" }),
+    el("span", {}, "Back to members")
+  ]);
 
-  // Status Badges & Onboarding Approvals
   const showApprovalBar = ["dormant", "suspended"].includes(member.status);
   const approvalActions = showApprovalBar
     ? el("div", { style: "background: var(--pine-50); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--pine-200); display: flex; gap: 10px; align-items: center; margin-bottom: 15px;" }, [
-        el("span", { style: "font-weight: 600; color: var(--pine-900);" }, "Registration Status: Pending approval"),
+        el("i", { "data-lucide": "shield-alert", style: "width: 20px; height: 20px; color: var(--pine-600);" }),
+        el("span", { style: "font-weight: 600; color: var(--pine-900); flex-grow: 1;" }, "Registration Status: Pending approval"),
         el("button", { class: "btn btn-primary btn-sm", onclick: () => approveRegistration(root, member) }, "Approve Registration"),
         el("button", { class: "btn btn-danger btn-sm", onclick: () => rejectRegistration(root, member) }, "Reject Registration")
       ])
@@ -132,7 +165,6 @@ async function renderDetail(root, memberId) {
     ]),
   ]);
 
-  // SIDE-BY-SIDE SPLIT SCREEN: Left biodata, Right KYC document viewer
   const leftCol = el("div", { class: "card", style: "flex: 1;" }, [
     el("h3", {}, "Bio-data Details"),
     infoRow("First Name", member.first_name),
@@ -146,7 +178,10 @@ async function renderDetail(root, memberId) {
   ]);
 
   const rightCol = el("div", { class: "card", style: "flex: 1; display: flex; flex-direction: column; gap: 15px;" }, [
-    el("h3", {}, "KYC Identity Documents"),
+    el("h3", { style: "display: flex; align-items: center; gap: 8px;" }, [
+      el("i", { "data-lucide": "shield-check", style: "width: 20px; height: 20px; color: var(--pine-600);" }),
+      el("span", {}, "KYC Identity Documents")
+    ]),
     el("p", { class: "muted small" }, "Click any document below to inspect or zoom high-resolution specimens."),
     el("div", { style: "display: grid; grid-template-columns: 1fr 1fr; gap: 10px;" }, [
       kycDocPreview("National ID Card", member.national_id, "id-card"),
@@ -200,6 +235,7 @@ async function renderDetail(root, memberId) {
     savingsCard,
     loansCard
   ]);
+  refreshIcons();
 }
 
 function infoRow(label, value) {
@@ -209,22 +245,22 @@ function infoRow(label, value) {
   ]);
 }
 
-// Render document thumbnail preview box
+// Render document thumbnail preview box with modern Lucide vectors
 function kycDocPreview(label, desc, docType) {
-  let docIcon = "📄";
+  let docIconName = "file-text";
   let previewStyle = "background: #f1f3f2; border: 2px dashed #cbd2ce; height: 110px;";
-  let contentEl = el("div", { style: "font-size: 11px; font-weight: bold; color: #4B554F;" }, desc);
+  let contentEl = el("div", { style: "font-size: 11px; font-weight: bold; color: #4B554F; margin-top: 5px;" }, desc);
   
   if (docType === "id-card") {
-    docIcon = "🪪";
+    docIconName = "id-card";
     previewStyle = "background: linear-gradient(135deg, #eef2f3, #dfe6e9); border: 1px solid var(--pine-200); height: 110px;";
   } else if (docType === "avatar") {
-    docIcon = "👤";
+    docIconName = "user-round";
     previewStyle = "background: #eef5f3; border: 1px solid var(--pine-200); height: 110px; border-radius: 50%; width: 110px; margin: 0 auto;";
   } else if (docType === "signature") {
-    docIcon = "🖋️";
-    previewStyle = "background: #fff; border: 1px solid #ddd; height: 70px; font-family: 'Courier New', Courier, monospace; font-style: italic;";
-    contentEl = el("div", { style: "font-size: 20px; color: #1e272e; transform: rotate(-5deg);" }, desc);
+    docIconName = "pen-tool";
+    previewStyle = "background: #fff; border: 1px solid #ddd; height: 85px; font-family: 'Courier New', Courier, monospace; font-style: italic;";
+    contentEl = el("div", { style: "font-size: 18px; color: #1e272e; transform: rotate(-3deg); margin-top: 5px;" }, desc);
   }
 
   const wrapper = el("div", {
@@ -232,8 +268,8 @@ function kycDocPreview(label, desc, docType) {
     style: `display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 12px; cursor: pointer; text-align: center; border-radius: 6px; ${previewStyle}`,
     onclick: () => openKycDocZoom(label, desc, docType)
   }, [
-    el("div", { style: "font-size: 24px;" }, docIcon),
-    el("div", { style: "font-weight: 600; font-size: 12px; margin-top: 4px;" }, label),
+    el("i", { "data-lucide": docIconName, style: "width: 28px; height: 28px; color: var(--pine-700);" }),
+    el("div", { style: "font-weight: 600; font-size: 12px; margin-top: 6px;" }, label),
     contentEl
   ]);
 
@@ -246,12 +282,17 @@ function openKycDocZoom(label, desc, docType) {
     let viewerEl;
     if (docType === "avatar") {
       viewerEl = el("div", { style: "text-align: center; padding: 20px;" }, [
-        el("div", { style: "font-size: 80px; width: 160px; height: 160px; line-height: 160px; border-radius: 50%; background: var(--pine-100); margin: 0 auto;" }, "👤"),
+        el("div", { style: "display: flex; align-items: center; justify-content: center; width: 160px; height: 160px; border-radius: 50%; background: var(--pine-100); margin: 0 auto;" }, [
+          el("i", { "data-lucide": "user-round", style: "width: 80px; height: 80px; color: var(--pine-700);" })
+        ]),
         el("h4", { style: "margin-top: 15px;" }, desc),
         el("p", { class: "muted" }, "Biometric Member Photograph specimen.")
       ]);
     } else if (docType === "signature") {
       viewerEl = el("div", { style: "padding: 30px; background: #fff; border: 1px solid #ccc; text-align: center;" }, [
+        el("div", { style: "display: flex; align-items: center; justify-content: center; margin-bottom: 15px;" }, [
+          el("i", { "data-lucide": "pen-tool", style: "width: 32px; height: 32px; color: #555;" })
+        ]),
         el("div", { style: "font-family: 'Courier New', monospace; font-size: 36px; font-style: italic; font-weight: bold; transform: rotate(-3deg); color: #111;" }, desc),
         el("hr", { style: "margin: 30px 0; border: none; border-top: 2px solid #555;" }),
         el("p", { class: "muted" }, "Specimen Signature Specimen for transaction verifications.")
@@ -262,9 +303,11 @@ function openKycDocZoom(label, desc, docType) {
           el("span", { style: "font-weight: bold; color: var(--pine-900);" }, "REPUBLIC OF UGANDA"),
           el("span", { style: "font-weight: bold; color: var(--pine-800);" }, "NATIONAL IDENTITY CARD")
         ]),
-        el("div", { style: "display: flex; gap: 15px; margin-top: 15px;" }, [
-          el("div", { style: "font-size: 50px; padding: 10px; background: #ddd; border-radius: 4px;" }, "👤"),
-          el("div", { style: "font-size: 13px;" }, [
+        el("div", { style: "display: flex; gap: 20px; margin-top: 15px; align-items: center;" }, [
+          el("div", { style: "padding: 15px; background: #ddd; border-radius: 6px; display: flex; align-items: center; justify-content: center;" }, [
+            el("i", { "data-lucide": "user-round", style: "width: 48px; height: 48px; color: #555;" })
+          ]),
+          el("div", { style: "font-size: 13px; line-height: 1.6;" }, [
             el("div", {}, `Document No: ${desc}`),
             el("div", {}, "Expiry Date: 30-JUN-2031"),
             el("div", {}, "Authority: National Identification and Registration Authority (NIRA)")
@@ -272,6 +315,9 @@ function openKycDocZoom(label, desc, docType) {
         ])
       ]);
     }
+
+    // Refresh icons inside the newly opened modal context
+    refreshIcons();
 
     return [
       viewerEl,
@@ -313,12 +359,10 @@ function rejectRegistration(root, member) {
       e.preventDefault();
       errorEl.hidden = true;
       try {
-        // Raise a risk flag indicating rejection reason
         await api.post("/api/v1/risk/flags", {
           flag_type: "ghost_member",
           description: `Registration rejected for ${member.first_name} ${member.last_name}: ${reasonInput.value}`
         });
-        // Update member status to suspended/exited
         await api.patch(`/api/v1/members/${member.id}`, { status: "exited" });
         showToast("Registration rejected.", "success");
         closeFn();
@@ -334,7 +378,7 @@ function rejectRegistration(root, member) {
   });
 }
 
-// Onboard member manually (already exists)
+// Onboard member manually
 function openCreateMemberModal(root) {
   openModal("Add member", (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
@@ -575,15 +619,10 @@ export default class MembersView {
   }
 
   render() {
-    // Basic structural rendering for view context...
     this.parseRouteQuery();
   }
 
-  /**
-   * Reads query hashes or parameters from the URL payload on initialization
-   */
   parseRouteQuery() {
-    // Handles parsing both standard window URL search strings or SPA hashes (e.g. #/members?search=john)
     const searchParams = new URLSearchParams(window.location.hash.includes('?') 
       ? window.location.hash.split('?')[1] 
       : window.location.search
@@ -596,20 +635,14 @@ export default class MembersView {
     }
   }
 
-  /**
-   * Applies the global filter payload directly to the view state
-   */
   executeMemberFilter(query) {
     const tableSearchInput = document.getElementById('table-filter-input'); 
     
     if (tableSearchInput) {
       tableSearchInput.value = query;
-      // Trigger native input events to fire off any virtual reactive logic/listeners bound to the element
       tableSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
-      // Fallback: If layout hasn't complete rendering elements yet, filter data collections directly
       console.log(`Filtering member data source for: ${query}`);
-      // this.datasource.filter(member => member.name.includes(query));
     }
   }
 }
