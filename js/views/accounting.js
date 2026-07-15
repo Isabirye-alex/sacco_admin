@@ -174,8 +174,8 @@ function openAccountModal(content, root) {
     
     // SPREAD options array below to make sure children are flat elements
     const form = el("form", { class: "ac-form" }, [
-      el("div", { class: "ac-field" }, [el("label", {}, "Code"), el("input", { id: "coa-code", placeholder: "e.g. 1010", required: true })}),
-      el("div", { class: "ac-field" }, [el("label", {}, "Name"), el("input", { id: "coa-name", placeholder: "e.g. Cash in Hand", required: true })}),
+      el("div", { class: "ac-field" }, [el("label", {}, "Code"), el("input", { id: "coa-code", placeholder: "e.g. 1010", required: true })]),
+      el("div", { class: "ac-field" }, [el("label", {}, "Name"), el("input", { id: "coa-name", placeholder: "e.g. Cash in Hand", required: true })]),
       el("div", { class: "ac-field" }, [
         el("label", {}, "Type"),
         el("select", { id: "coa-type" }, ...["asset", "liability", "equity", "income", "expense"].map((t) => el("option", { value: t }, titleCase(t)))),
@@ -251,7 +251,7 @@ async function renderJournalTab(content, root) {
             updateBalance(); 
           }, 150);
         } 
-      }, []);
+      }, []),
     ]);
     row.querySelector(".ac-btn-icon-danger").innerHTML = ICONS.trash;
     linesHolder.appendChild(row);
