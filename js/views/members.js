@@ -534,7 +534,7 @@ function openBulkUploadModal(root) {
 
 // Edit Member & Freeze/Suspend/Reactivate status management
 function openEditMemberModal(root, member) {
-  openModal(`Manage Status — ${member.first_name} ${member.last_name}`, (closeFn) => {
+  openModal(`Manage Status \u2014 ${member.first_name} ${member.last_name}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
     const phoneInput = el("input", { id: "e-phone", value: member.phone_number });
     const emailInput = el("input", { id: "e-email", type: "email", value: member.email || "" });
@@ -547,11 +547,18 @@ function openEditMemberModal(root, member) {
         )
       )
     );
+    const branchSelect = el("select", { id: "e-branch" }, [el("option", { value: "" }, "Loading branches\u2026")]);
+    api.get("/api/v1/branches").then((branches) => {
+      branchSelect.innerHTML = "";
+      branchSelect.appendChild(el("option", { value: "" }, "\u2014 No branch assigned \u2014"));
+      branches.forEach((b) => branchSelect.appendChild(el("option", { value: b.id, selected: b.id === member.branch_id }, b.name)));
+    }).catch(() => { branchSelect.innerHTML = "<option value=''>Could not load branches</option>"; });
 
     const form = el("form", {}, [
       el("div", { class: "field" }, [el("label", {}, "Phone number"), phoneInput]),
       el("div", { class: "field" }, [el("label", {}, "Email"), emailInput]),
       el("div", { class: "field" }, [el("label", {}, "Address"), addressInput]),
+      el("div", { class: "field" }, [el("label", {}, "Branch"), branchSelect]),
       el("div", { class: "field" }, [
         el("label", {}, "Account Status Configuration"),
         statusSelect,
@@ -573,6 +580,7 @@ function openEditMemberModal(root, member) {
           email: emailInput.value || null,
           physical_address: addressInput.value || null,
           status: statusSelect.value,
+          branch_id: branchSelect.value || null,
         });
         showToast("Member status updated.", "success");
         closeFn();

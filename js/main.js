@@ -14,6 +14,7 @@ import { renderNotifications } from "./views/notifications.js";
 import { renderReports } from "./views/reports.js";
 import { renderRisk } from "./views/risk.js";
 import { renderUsers } from "./views/users.js";
+import { renderReferrals } from "./views/referrals.js";
 
 registerRoute("/dashboard", "Dashboard", renderDashboard);
 registerRoute("/members", "Members", renderMembers);
@@ -26,6 +27,7 @@ registerRoute("/groups", "Group Management", renderGroups);
 registerRoute("/notifications", "Notifications", renderNotifications);
 registerRoute("/reports", "Reports & Analytics", renderReports);
 registerRoute("/risk", "Risk & Compliance", renderRisk);
+registerRoute("/referrals", "Referrals", renderReferrals);
 registerRoute("/users", "Users & Audit", renderUsers);
 
 function renderUserChip() {

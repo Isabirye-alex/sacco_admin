@@ -37,6 +37,24 @@ export async function renderRisk(root) {
     }, "Run dormancy sweep now"),
   ]);
 
+  const penaltyCard = el("div", { class: "card" }, [
+    el("h3", {}, "Overdue loan penalties"),
+    el("p", { class: "muted" }, "Runs automatically every 24 hours. Applies a one-time penalty to overdue, unpaid installments - already-penalized installments are skipped, so this is safe to run more than once."),
+    el("button", {
+      class: "btn btn-secondary btn-sm",
+      onclick: async () => {
+        const ok = await confirmDialog("Apply penalties to overdue installments now?", "Apply penalties", false);
+        if (!ok) return;
+        try {
+          const result = await api.post("/api/v1/risk/apply-penalties");
+          showToast(`Penalized ${result.installments_penalized} installment(s) across ${result.loans_affected} loan(s), total UGX ${formatMoney(result.total_penalty)}.`, "success");
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      },
+    }, "Apply overdue penalties now"),
+  ]);
+
   const toolbar = el("div", { class: "toolbar" }, [
     el(
       "select",
@@ -65,7 +83,7 @@ export async function renderRisk(root) {
   ]);
 
   mount(root, [
-    el("div", { class: "grid grid-2" }, [parCard, dormancyCard].filter(Boolean)),
+    el("div", { class: "grid grid-3" }, [parCard, dormancyCard, penaltyCard].filter(Boolean)),
     toolbar,
     flagsCard,
   ]);

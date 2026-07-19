@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import {
-  el, mount, formatMoney, formatDateTime, titleCase, badge, dataTable, openModal, showToast, memberPicker, createUserNameResolver
+  el, mount, formatMoney, formatDateTime, titleCase, badge, dataTable, openModal, showToast, memberPicker, createUserNameResolver, confirmDialog
 } from "../utils.js";
 
 const resolveUserName = createUserNameResolver((path) => api.get(path));
@@ -47,7 +47,22 @@ async function renderProductsTab(content, root) {
 
   const header = el("div", { class: "card-header" }, [
     el("h3", {}, "Savings Products Catalog"),
-    el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root, accounts) }, "+ Create Savings Product"),
+    el("div", { style: "display:flex;gap:8px" }, [
+      el("button", {
+        class: "btn btn-secondary btn-sm",
+        onclick: async () => {
+          const ok = await confirmDialog("Post monthly interest to all eligible accounts now? Accounts already posted this month are skipped automatically.", "Post interest", false);
+          if (!ok) return;
+          try {
+            const result = await api.post("/api/v1/savings/post-interest");
+            showToast(`Posted interest to ${result.accounts_posted} account(s), total UGX ${formatMoney(result.total_interest)}.`, "success");
+          } catch (err) {
+            showToast(err.message, "error");
+          }
+        },
+      }, "Post monthly interest"),
+      el("button", { class: "btn btn-primary btn-sm", onclick: () => openProductModal(content, root, accounts) }, "+ Create Savings Product"),
+    ]),
   ]);
 
   // Catalog Matrix Layout
