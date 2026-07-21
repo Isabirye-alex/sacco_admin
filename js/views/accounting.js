@@ -131,16 +131,16 @@ async function renderAccountsTab(content, root) {
   }
 
   // --- Sub-Header Title Strip ---
-  const headerTitleStrip = el("div", { class: "coa-title-strip" }, [
-    el("div", { class: "coa-title-group" }, [
-      el("h2", { class: "coa-main-title" }, "Chart of Accounts"),
-      el("span", { class: "coa-subtitle" }, "UGANDA BREWERIES COPERATIVE SAVINGS & CREDIT SOCIETY LIMITED")
-    ]),
-    el("div", { class: "coa-breadcrumb" }, [
-      el("span", { class: "coa-home-icon" }, "🌐 Home > "),
-      el("span", {}, "Chart of Accounts")
-    ])
-  ]);
+  // const headerTitleStrip = el("div", { class: "coa-title-strip" }, [
+  //   el("div", { class: "coa-title-group" }, [
+  //     el("h2", { class: "coa-main-title" }, "Chart of Accounts"),
+  //     el("span", { class: "coa-subtitle" }, "UGANDA BREWERIES COPERATIVE SAVINGS & CREDIT SOCIETY LIMITED")
+  //   ]),
+  //   el("div", { class: "coa-breadcrumb" }, [
+  //     el("span", { class: "coa-home-icon" }, "🌐 Home > "),
+  //     el("span", {}, "Chart of Accounts")
+  //   ])
+  // ]);
 
   // --- Button Action Bar ---
   const actionBar = el("div", { class: "coa-action-bar" }, [
