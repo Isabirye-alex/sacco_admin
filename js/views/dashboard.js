@@ -1,7 +1,13 @@
 import { api } from "../api.js";
+import { API_BASE_URL } from "../config.js";
 import { getCurrentUser } from "../auth.js";
 import { el, mount, formatMoney, formatDate, formatDateTime, badge, openModal, showToast } from "../utils.js";
 import { goTo } from "../router.js";
+
+function triggerQuickReview() {
+  goTo("/loans");
+  showToast("Showing loan applications \u2014 filter by Pending to review the queue.", "success");
+}
 
 // State for dashboard filters
 const filterState = {
@@ -12,12 +18,10 @@ const filterState = {
 // Tracks active telemetry instance reference globally to prevent leaks across routing states
 let activeTelemetryInterval = null;
 
-// Time-series history buffers for the live telemetry chart (keeps last 15 ticks)
+// Time-series history buffer for the live telemetry chart (keeps last 15 ticks)
 const telemetryHistory = {
   timestamps: [],
   latency: [],
-  memory: [],
-  jitters: []
 };
 
 export async function renderDashboard(root) {
@@ -26,6 +30,8 @@ export async function renderDashboard(root) {
   if (activeTelemetryInterval) {
     clearInterval(activeTelemetryInterval);
   }
+
+  const branches = await api.get("/api/v1/branches").catch(() => []);
 
   const headerCard = el("div", { class: "card", style: "margin-bottom: 20px" }, [
     el("div", { style: "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;" }, [
@@ -52,9 +58,7 @@ export async function renderDashboard(root) {
           onchange: (e) => { filterState.branch = e.target.value; refreshDashboardData(); }
         }, [
           el("option", { value: "all" }, "All Branches"),
-          el("option", { value: "central" }, "Central Branch"),
-          el("option", { value: "kampala" }, "Kampala Branch"),
-          el("option", { value: "entebbe" }, "Entebbe Branch")
+          ...branches.map((b) => el("option", { value: b.id }, b.name)),
         ])
       ])
     ])
@@ -91,8 +95,6 @@ export async function renderDashboard(root) {
   // Reset metrics arrays on fresh layout mount
   telemetryHistory.timestamps = [];
   telemetryHistory.latency = [];
-  telemetryHistory.memory = [];
-  telemetryHistory.jitters = [];
 
   setupTelemetryElements();
   startLiveTelemetry();
@@ -113,39 +115,29 @@ function setupTelemetryElements() {
 
   container.innerHTML = `
     <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; font-family: system-ui, sans-serif; align-items: stretch;">
-      <!-- Live Matrix Streaming Chart -->
       <div class="card" style="padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column;">
         <div style="font-size: 12px; font-weight: 600; color: var(--pine-900); margin-bottom: 6px; display: flex; justify-content: space-between;">
-          <span>Runtime Streams (Real-time Engine)</span>
-          <span style="color: green; font-size: 11px; font-weight: normal;">● Live Syncing</span>
+          <span>API Latency (live)</span>
+          <span id="telemetry-live-dot" style="color: green; font-size: 11px; font-weight: normal;">\u25cf Checking\u2026</span>
         </div>
         <div id="telemetry-stream-chart" style="width: 100%; height: 140px;"></div>
       </div>
 
-      <!-- Core Numeric Engine Gauges -->
-      <div style="display: grid; grid-template-rows: repeat(3, 1fr); gap: 10px;">
+      <div style="display: grid; grid-template-rows: repeat(2, 1fr); gap: 10px;">
         <div class="metric-card" style="padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <div style="font-size: 11px; color: var(--muted);">Latency / Jitter</div>
+            <div style="font-size: 11px; color: var(--muted);">API Response Time</div>
             <div id="telemetry-rtt" style="font-size: 18px; font-weight: bold; color: var(--pine-900);">-- ms</div>
           </div>
-          <div id="telemetry-sub-jitter" style="font-size: 11px; color: var(--muted); text-align: right;">±0ms jitter</div>
-        </div>
-        
-        <div class="metric-card" style="padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <div style="font-size: 11px; color: var(--muted);">JS Heap Allocation</div>
-            <div id="telemetry-memory" style="font-size: 18px; font-weight: bold; color: var(--pine-900);">-- MB</div>
-          </div>
-          <div id="telemetry-sub-gc" style="font-size: 11px; color: #b45309; text-align: right;">0.0% GC Load</div>
+          <div style="font-size: 11px; color: var(--muted); text-align: right;">Round-trip to backend</div>
         </div>
 
         <div class="metric-card" style="padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <div style="font-size: 11px; color: var(--muted);">Engine Node Health</div>
-            <div id="telemetry-uptime" style="font-size: 18px; font-weight: bold; color: green;">Online</div>
+            <div style="font-size: 11px; color: var(--muted);">Backend Status</div>
+            <div id="telemetry-uptime" style="font-size: 18px; font-weight: bold; color: var(--muted);">Checking\u2026</div>
           </div>
-          <div id="telemetry-sub-cache" style="font-size: 11px; color: #16a34a; text-align: right;">99.8% Cache Hit</div>
+          <div id="telemetry-sub-memory" style="font-size: 11px; color: var(--muted); text-align: right;"></div>
         </div>
       </div>
     </div>
@@ -154,83 +146,60 @@ function setupTelemetryElements() {
 
 function startLiveTelemetry() {
   const updateMetrics = async () => {
-    let currentRtt = 0;
-    let currentMemory = 0;
-    let jitter = Math.round(Math.random() * 4); 
+    let currentRtt = null;
 
     const rttElement = document.getElementById('telemetry-rtt');
-    const jitterElement = document.getElementById('telemetry-sub-jitter');
-    if (rttElement) {
-      if (navigator.connection && navigator.connection.rtt) {
-        currentRtt = navigator.connection.rtt + jitter;
-        rttElement.textContent = `${currentRtt} ms`;
-      } else {
-        const start = performance.now();
-        try {
-          await fetch('/api/heartbeat', { method: 'HEAD', cache: 'no-store' }).catch(()=>{});
-          currentRtt = Math.round(performance.now() - start);
-          rttElement.textContent = `${currentRtt} ms`;
-        } catch {
-          currentRtt = 12 + jitter; 
-          rttElement.textContent = `${currentRtt} ms`;
-        }
-      }
-      if (jitterElement) jitterElement.textContent = `±${jitter}ms jitter`;
-    }
-
-    const memoryElement = document.getElementById('telemetry-memory');
-    const gcElement = document.getElementById('telemetry-sub-gc');
-    if (memoryElement) {
-      if (performance.memory) {
-        const heapUsedBytes = performance.memory.usedJSHeapSize;
-        currentMemory = parseFloat((heapUsedBytes / (1024 * 1024)).toFixed(1));
-        memoryElement.textContent = `${currentMemory} MB`;
-      } else {
-        currentMemory = parseFloat((32.4 + Math.sin(Date.now() / 50000) * 4 + (Math.random() * 1.5)).toFixed(1));
-        memoryElement.textContent = `${currentMemory} MB`;
-      }
-      if (gcElement) {
-        const gcPressure = (Math.random() * 2 + (currentMemory > 35 ? 1.5 : 0.2)).toFixed(1);
-        gcElement.textContent = `${gcPressure}% GC Load`;
-      }
-    }
-
     const uptimeElement = document.getElementById('telemetry-uptime');
-    const cacheElement = document.getElementById('telemetry-sub-cache');
+    const liveDot = document.getElementById('telemetry-live-dot');
+    const memoryElement = document.getElementById('telemetry-sub-memory');
+
+    // Real round-trip time to the ACTUAL backend (not a relative same-origin
+    // path - the frontend and API are on different hosts, so a relative
+    // fetch would silently check the wrong server).
+    const start = performance.now();
+    let healthy = false;
+    try {
+      const res = await fetch(`${API_BASE_URL}/health`, { method: "GET", cache: "no-store" });
+      currentRtt = Math.round(performance.now() - start);
+      healthy = res.ok;
+    } catch {
+      currentRtt = null;
+      healthy = false;
+    }
+
+    if (rttElement) rttElement.textContent = currentRtt !== null ? `${currentRtt} ms` : "\u2014";
     if (uptimeElement) {
-      try {
-        const res = await fetch('/api/health');
-        const data = await res.json();
-        uptimeElement.textContent = data.status === 'healthy' ? 'Operational' : 'Degraded';
-        uptimeElement.style.color = data.status === 'healthy' ? '#16a34a' : '#d97706';
-      } catch {
-        uptimeElement.textContent = 'Operational'; 
-        uptimeElement.style.color = '#16a34a';
-      }
-      if (cacheElement) {
-        const cacheHitRatio = (99.4 + Math.random() * 0.5).toFixed(2);
-        cacheElement.textContent = `${cacheHitRatio}% Cache Hit`;
-      }
+      uptimeElement.textContent = healthy ? "Online" : "Unreachable";
+      uptimeElement.style.color = healthy ? "#16a34a" : "#B3261E";
+    }
+    if (liveDot) {
+      liveDot.textContent = healthy ? "\u25cf Live" : "\u25cf Offline";
+      liveDot.style.color = healthy ? "green" : "#B3261E";
+    }
+    // JS heap size is only real in Chromium-based browsers via a
+    // non-standard API - shown only when genuinely available, never
+    // simulated, since a fake number here would be exactly the kind of
+    // misleading "system health" data this dashboard shouldn't show.
+    if (memoryElement) {
+      memoryElement.textContent = performance.memory
+        ? `JS heap: ${(performance.memory.usedJSHeapSize / (1024 * 1024)).toFixed(1)} MB`
+        : "";
     }
 
     const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     telemetryHistory.timestamps.push(nowTime);
-    telemetryHistory.latency.push(currentRtt);
-    telemetryHistory.memory.push(currentMemory);
-    telemetryHistory.jitters.push(jitter);
+    telemetryHistory.latency.push(currentRtt || 0);
 
     if (telemetryHistory.timestamps.length > 15) {
       telemetryHistory.timestamps.shift();
       telemetryHistory.latency.shift();
-      telemetryHistory.memory.shift();
-      telemetryHistory.jitters.shift();
     }
 
     renderStreamingTelemetryChart();
   };
 
   updateMetrics();
-  activeTelemetryInterval = setInterval(updateMetrics, 3000); 
+  activeTelemetryInterval = setInterval(updateMetrics, 5000);
 }
 
 function renderStreamingTelemetryChart() {
@@ -244,39 +213,19 @@ function renderStreamingTelemetryChart() {
     type: 'scatter',
     mode: 'lines',
     line: { color: '#1B4B43', width: 2, shape: 'spline' },
-    yaxis: 'y'
-  };
-
-  const traceMemory = {
-    x: telemetryHistory.timestamps,
-    y: telemetryHistory.memory,
-    name: 'RAM (MB)',
-    type: 'scatter',
-    mode: 'lines',
-    line: { color: '#C89B3C', width: 2, dash: 'dashdot' },
-    yaxis: 'y2'
   };
 
   const layout = {
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(0,0,0,0)",
     font: { family: "system-ui, sans-serif", size: 9, color: "#7C8880" },
-    margin: { t: 10, r: 35, b: 20, l: 30 },
-    showlegend: true,
-    legend: { orientation: "h", x: 0, y: 1.2, font: { size: 9 } },
+    margin: { t: 10, r: 20, b: 20, l: 40 },
+    showlegend: false,
     xaxis: { showgrid: false, zeroline: false },
     yaxis: { title: 'Latency (ms)', titlefont: { color: '#1B4B43' }, tickfont: { color: '#1B4B43' }, showgrid: true, gridcolor: '#f1f5f9' },
-    yaxis2: {
-      title: 'Memory (MB)',
-      titlefont: { color: '#C89B3C' },
-      tickfont: { color: '#C89B3C' },
-      overlaying: 'y',
-      side: 'right',
-      showgrid: false
-    }
   };
 
-  Plotly.react("telemetry-stream-chart", [traceLatency, traceMemory], layout, { responsive: true, displayModeBar: false });
+  Plotly.react("telemetry-stream-chart", [traceLatency], layout, { responsive: true, displayModeBar: false });
 }
 
 // Main refresh function
@@ -295,117 +244,87 @@ async function refreshDashboardData() {
       tbData,
       glSettings,
       accounts,
-      auditLogs
+      auditLogs,
     ] = await Promise.all([
       api.get("/api/v1/members?page_size=1000").catch(() => ({ items: [], total: 0 })),
       api.get("/api/v1/loans/applications").catch(() => []),
-      api.get("/api/v1/risk/portfolio-at-risk").catch(() => ({ portfolio_at_risk_pct: 0, overdue_outstanding: 0, total_outstanding: 0 })),
+      api.get("/api/v1/risk/portfolio-at-risk").catch(() => null),
       api.get("/api/v1/risk/flags?flag_status=open").catch(() => []),
       api.get("/api/v1/accounting/trial-balance").catch(() => []),
       api.get("/api/v1/accounting/gl-settings").catch(() => null),
       api.get("/api/v1/accounting/accounts").catch(() => []),
-      api.get("/api/v1/admin/audit-logs").catch(() => [])
+      api.get("/api/v1/admin/audit-logs").catch(() => []),
     ]);
 
-    const filteredMembers = (membersData.items || []).filter(m => 
-      matchesBranch(m.id) && matchesDate(m.date_joined)
-    );
+    // Real branch_id per member (needed to filter loans too, since loans
+    // don't carry a branch_id of their own - they belong to a member who does).
+    const memberBranchById = new Map((membersData.items || []).map((m) => [m.id, m.branch_id]));
 
-    const filteredLoans = (loansData || []).filter(l => 
-      matchesBranch(l.member_id) && matchesDate(l.created_at)
+    const filteredMembers = (membersData.items || []).filter(
+      (m) => matchesBranch(m.branch_id) && matchesDate(m.date_joined)
+    );
+    const filteredLoans = (loansData || []).filter(
+      (l) => matchesBranch(memberBranchById.get(l.member_id)) && matchesDate(l.created_at)
     );
 
     const totalMembership = filteredMembers.length;
-    const activeMembership = filteredMembers.filter(m => m.status === "active").length;
+    const activeMembership = filteredMembers.filter((m) => m.status === "active").length;
 
+    // Real totals only - no fabricated fallback numbers. A genuine zero
+    // (e.g. a fresh SACCO with no transactions yet) is shown as zero, not
+    // silently swapped for a fake "looks-active" number.
     let totalSavings = 0;
-    tbData.forEach(tb => {
-      if (tb.account_code === "DEPOSIT" || tb.account_name.toLowerCase().includes("deposit") || tb.account_name.toLowerCase().includes("savings")) {
-        totalSavings += (Number(tb.credit) - Number(tb.debit));
+    tbData.forEach((tb) => {
+      if (tb.account_name.toLowerCase().includes("deposit") || tb.account_name.toLowerCase().includes("saving")) {
+        totalSavings += Number(tb.credit) - Number(tb.debit);
       }
     });
-    if (totalSavings === 0) {
-      totalSavings = 590500000;
-    }
 
-    let loanPortfolio = Number(parData.total_outstanding || 0);
-    if (loanPortfolio === 0 && loansData.length) {
+    let loanPortfolio = Number(parData?.total_outstanding || 0);
+    if (!loanPortfolio && filteredLoans.length) {
       loanPortfolio = filteredLoans
-        .filter(l => ["active", "disbursed"].includes(l.status))
+        .filter((l) => ["active", "disbursed"].includes(l.status))
         .reduce((sum, l) => sum + Number(l.amount_approved || l.amount_requested || 0), 0);
     }
-    if (loanPortfolio === 0) {
-      loanPortfolio = 1250000000;
-    }
 
-    let nplRatio = Number(parData.portfolio_at_risk_pct || 0);
-    let overdueOutstanding = Number(parData.overdue_outstanding || 0);
-    if (overdueOutstanding === 0 && loansData.length) {
-      const overdueLoans = filteredLoans.filter(l => l.status === "defaulted");
-      overdueOutstanding = overdueLoans.reduce((sum, l) => sum + Number(l.amount_approved || 0), 0);
-      nplRatio = loanPortfolio > 0 ? (overdueOutstanding / loanPortfolio) * 100 : 0;
-    }
-    if (nplRatio === 0) {
-      nplRatio = 2.45;
-    }
+    const nplRatio = Number(parData?.portfolio_at_risk_pct || 0);
+    const overdueOutstanding = Number(parData?.overdue_outstanding || 0);
 
-    let cashCode = "CASH";
-    let mmCode = "MM";
+    let cashCode = null;
+    let mmCode = null;
     if (glSettings && accounts.length) {
-      const cashAcc = accounts.find(a => a.id === glSettings.cash_account_id);
-      const mmAcc = accounts.find(a => a.id === glSettings.mobile_money_account_id);
+      const cashAcc = accounts.find((a) => a.id === glSettings.cash_account_id);
+      const mmAcc = accounts.find((a) => a.id === glSettings.mobile_money_account_id);
       if (cashAcc) cashCode = cashAcc.code;
       if (mmAcc) mmCode = mmAcc.code;
     }
     let totalLiquidity = 0;
-    tbData.forEach(tb => {
-      if (tb.account_code === cashCode || tb.account_code === mmCode || tb.account_name.toLowerCase().includes("cash") || tb.account_name.toLowerCase().includes("mobile money") || tb.account_name.toLowerCase().includes("bank")) {
-        totalLiquidity += (Number(tb.debit) - Number(tb.credit));
+    tbData.forEach((tb) => {
+      const nameLower = tb.account_name.toLowerCase();
+      if (tb.account_code === cashCode || tb.account_code === mmCode || nameLower.includes("cash") || nameLower.includes("mobile money") || nameLower.includes("bank")) {
+        totalLiquidity += Number(tb.debit) - Number(tb.credit);
       }
     });
-    if (totalLiquidity <= 0) {
-      totalLiquidity = 425000000;
-    }
-
-    let filterScale = 1.0;
-    if (filterState.branch !== "all") {
-      filterScale = filterState.branch === "central" ? 0.5 : filterState.branch === "kampala" ? 0.3 : 0.2;
-      totalSavings = totalSavings * filterScale;
-      loanPortfolio = loanPortfolio * filterScale;
-      totalLiquidity = totalLiquidity * filterScale;
-    }
 
     mount(kpiGrid, [
       statCard("Total Membership", `${totalMembership}`, `${activeMembership} active members`, "good", "/members"),
       statCard("Total Deposits", `UGX ${formatMoney(totalSavings)}`, "Savings & Fixed deposits", "good", "/savings"),
       statCard("Loan Portfolio", `UGX ${formatMoney(loanPortfolio)}`, "Outstanding loan principal", "good", "/loans"),
-      statCard("NPL Ratio", `${nplRatio.toFixed(2)}%`, `Portfolio at Risk: UGX ${formatMoney(loanPortfolio * (nplRatio/100))}`, nplRatio > 5 ? "danger" : "good", "/risk"),
-      statCard("Total Liquidity", `UGX ${formatMoney(totalLiquidity)}`, "Cash & bank equivalents", "good", "/accounting")
+      statCard("NPL Ratio", `${nplRatio.toFixed(2)}%`, parData ? `Overdue: UGX ${formatMoney(overdueOutstanding)}` : "Requires risk-report access", nplRatio > 5 ? "danger" : "good", "/risk"),
+      statCard("Total Liquidity", `UGX ${formatMoney(totalLiquidity)}`, glSettings ? "Cash & bank equivalents" : "Set up GL Settings for this figure", "good", "/accounting"),
     ]);
 
-    renderVisualCharts(chartsGrid, filteredLoans, filteredMembers, totalSavings, loanPortfolio);
+    await renderVisualCharts(chartsGrid);
     renderApprovalsQueue(approvalsCard, filteredLoans, filteredMembers, flagsData);
     renderActivityFeed(activityCard, auditLogs);
-
   } catch (err) {
     console.error("Dashboard error:", err);
   }
 }
 
-function getBranchForId(id) {
-  if (!id) return "Central Branch";
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = id.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % 3;
-  return ["Central Branch", "Kampala Branch", "Entebbe Branch"][index];
-}
-
-function matchesBranch(memberId) {
+function matchesBranch(branchId) {
   if (filterState.branch === "all") return true;
-  const branchName = getBranchForId(memberId).toLowerCase();
-  return branchName.includes(filterState.branch);
+  return branchId === filterState.branch;
 }
 
 function matchesDate(dateStr) {
@@ -428,7 +347,7 @@ function matchesDate(dateStr) {
   return true;
 }
 
-function renderVisualCharts(root, loans, members, totalSavings, loanPortfolio) {
+async function renderVisualCharts(root) {
   mount(root, [
     el("div", { class: "chart-card" }, [
       el("h3", {}, "Savings vs. Withdrawals Trends"),
@@ -453,46 +372,48 @@ function renderVisualCharts(root, loans, members, totalSavings, loanPortfolio) {
   };
   const config = { responsive: true, displayModeBar: false };
 
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"];
-  const savingsData = [
-    totalSavings * 0.75, totalSavings * 0.78, totalSavings * 0.82, 
-    totalSavings * 0.88, totalSavings * 0.91, totalSavings * 0.95, totalSavings
-  ];
-  const withdrawalsData = [
-    totalSavings * 0.20, totalSavings * 0.22, totalSavings * 0.18,
-    totalSavings * 0.25, totalSavings * 0.30, totalSavings * 0.28, totalSavings * 0.31
-  ];
+  let trends;
+  try {
+    trends = await api.get("/api/v1/reports/dashboard-trends?months=7");
+  } catch {
+    document.getElementById("chart-savings-trends").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
+    document.getElementById("chart-loans-trends").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
+    document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
+    return;
+  }
+
+  const months = trends.monthly_savings.map((m) => m.month);
+  const deposits = trends.monthly_savings.map((m) => Number(m.deposits));
+  const withdrawals = trends.monthly_savings.map((m) => Number(m.withdrawals));
 
   Plotly.newPlot("chart-savings-trends", [
-    { x: months, y: savingsData, type: "scatter", mode: "lines+markers", name: "Deposits", line: { color: "#1B4B43", width: 3 }, marker: { size: 6 } },
-    { x: months, y: withdrawalsData, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } }
-  ], { ...layout, xaxis: { title: "Period" }, yaxis: { title: "UGX Amount" } }, config);
+    { x: months, y: deposits, type: "scatter", mode: "lines+markers", name: "Deposits", line: { color: "#1B4B43", width: 3 }, marker: { size: 6 } },
+    { x: months, y: withdrawals, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } }
+  ], { ...layout, xaxis: { title: "Month" }, yaxis: { title: "UGX Amount" } }, config);
 
-  const disbs = [
-    loanPortfolio * 0.3, loanPortfolio * 0.25, loanPortfolio * 0.4, 
-    loanPortfolio * 0.28, loanPortfolio * 0.35, loanPortfolio * 0.5, loanPortfolio * 0.45
-  ];
-  const repays = [
-    loanPortfolio * 0.15, loanPortfolio * 0.18, loanPortfolio * 0.25, 
-    loanPortfolio * 0.20, loanPortfolio * 0.28, loanPortfolio * 0.32, loanPortfolio * 0.35
-  ];
+  const disbs = trends.monthly_loans.map((m) => Number(m.disbursed));
+  const repays = trends.monthly_loans.map((m) => Number(m.repaid));
 
   Plotly.newPlot("chart-loans-trends", [
     { x: months, y: disbs, type: "bar", name: "Disbursements", marker: { color: "#23685C" } },
     { x: months, y: repays, type: "bar", name: "Repayments", marker: { color: "#C89B3C" } }
-  ], { ...layout, barmode: "group", xaxis: { title: "Period" }, yaxis: { title: "UGX Amount" } }, config);
+  ], { ...layout, barmode: "group", xaxis: { title: "Month" }, yaxis: { title: "UGX Amount" } }, config);
 
-  Plotly.newPlot("chart-product-dist", [
-    {
-      labels: ["Main Savings", "Fixed Deposits", "Holiday Accounts", "Emergency Shares"],
-      values: [totalSavings * 0.55, totalSavings * 0.30, totalSavings * 0.10, totalSavings * 0.05],
-      type: "pie",
-      hole: 0.5,
-      marker: { colors: ["#1B4B43", "#23685C", "#C89B3C", "#7C8880"] },
-      textinfo: "percent",
-      textposition: "inside"
-    }
-  ], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: "h", y: -0.1 } }, config);
+  if (!trends.product_distribution.length) {
+    document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>No active savings balances yet.</p>";
+  } else {
+    Plotly.newPlot("chart-product-dist", [
+      {
+        labels: trends.product_distribution.map((p) => p.product),
+        values: trends.product_distribution.map((p) => Number(p.balance)),
+        type: "pie",
+        hole: 0.5,
+        marker: { colors: ["#1B4B43", "#23685C", "#C89B3C", "#7C8880", "#8A5A00", "#B3261E"] },
+        textinfo: "percent",
+        textposition: "inside"
+      }
+    ], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: "h", y: -0.1 } }, config);
+  }
 }
 
 function renderApprovalsQueue(cardEl, loans, members, flags) {

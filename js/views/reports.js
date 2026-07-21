@@ -1,5 +1,6 @@
 import { api } from "../api.js";
-import { el, mount, formatDate, formatMoney, showToast, dataTable } from "../utils.js";
+import { el, mount, formatDate, formatMoney, showToast, dataTable, badge } from "../utils.js";
+import { goTo, refreshCurrentRoute } from "../router.js";
 
 // Schedulers list saved in localStorage
 let schedules = JSON.parse(localStorage.getItem("sacco_report_schedules") || "[]");
@@ -14,8 +15,8 @@ export async function renderReports(root) {
       renderReportAccordion()
     ]),
     el("div", { class: "card", style: "margin-top: 20px;" }, [
-      el("h3", {}, "Automated Report Schedulers"),
-      el("p", { class: "muted small" }, "Manage automated background compiling & email notifications of reports."),
+      el("h3", {}, "Report Reminders"),
+      el("p", { class: "muted small" }, "Saved locally in this browser as a to-do list \u2014 these don't actually run on a server or send email yet. Treat them as personal reminders, not automated delivery."),
       renderSchedulerList(),
       renderScheduleForm()
     ])
@@ -99,8 +100,8 @@ function renderReportAccordion() {
 function openReportGeneratorPanel(rep) {
   const panel = document.getElementById("report-view-panel");
   
-  const fromDate = el("input", { type: "date", required: true, style: "flex:1;" });
-  const toDate = el("input", { type: "date", required: true, style: "flex:1;" });
+  const fromDate = el("input", { type: "date", style: "flex:1;" });
+  const toDate = el("input", { type: "date", style: "flex:1;" });
   const formatSelect = el("select", { class: "select-sm" }, [
     el("option", { value: "pdf" }, "PDF Document"),
     el("option", { value: "csv" }, "CSV Spreadsheet"),
@@ -125,10 +126,7 @@ function openReportGeneratorPanel(rep) {
   configForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     mount(outputPreview, el("div", { class: "spinner" }));
-    
-    // Simulate compilation delay
-    await new Promise(r => setTimeout(r, 800));
-    compileAndDisplayPreview(rep, outputPreview);
+    compileAndDisplayPreview(rep, outputPreview, fromDate.value, toDate.value);
   });
 
   mount(panel, [
@@ -138,78 +136,203 @@ function openReportGeneratorPanel(rep) {
   ]);
 }
 
-// 3. Compile and Display Preview
-async function compileAndDisplayPreview(rep, previewEl) {
+// 3. Compile and Display Preview - pulls REAL data from the backend for
+// every report. (Previously most of these were hardcoded dummy numbers -
+// only Trial Balance ever called the real API.)
+async function compileAndDisplayPreview(rep, previewEl, fromDate, toDate) {
   let content;
+  const asOf = toDate || undefined;
 
-  if (rep.key === "trial-balance") {
-    const lines = await api.get("/api/v1/accounting/trial-balance").catch(() => []);
-    content = dataTable(
-      [
-        { header: "Account Code", render: (l) => l.account_code },
-        { header: "Account Name", render: (l) => l.account_name },
-        { header: "Debit balance", className: "ledger", render: (l) => `UGX ${formatMoney(l.debit)}` },
-        { header: "Credit balance", className: "ledger", render: (l) => `UGX ${formatMoney(l.credit)}` }
-      ],
-      lines
-    );
-  } else if (rep.key === "balance-sheet") {
-    // Generate dummy balance sheet matching Microfinance standards
-    const rows = [
-      { name: "Total Liquid Assets (Cash & Bank)", amt: 425000000, type: "Asset" },
-      { name: "Total Loans Outstanding Portfolio", amt: 1250000000, type: "Asset" },
-      { name: "Total Members Capital Shares", amt: 300000000, type: "Equity" },
-      { name: "Total Savings Deposit Liabilities", amt: 590500000, type: "Liability" }
-    ];
-    content = dataTable(
-      [
-        { header: "Account Classification", render: (r) => r.name },
-        { header: "Balance", className: "ledger", render: (r) => `UGX ${formatMoney(r.amt)}` },
-        { header: "GL Classification", render: (r) => badge(r.type) }
-      ],
-      rows
-    );
-  } else if (rep.key === "liquidity-ratio") {
-    // Liquidity Ratio analysis mockup
-    const rows = [
-      { metric: "Liquid Assets (Cash / Mobile Money)", val: "UGX 425,000,000" },
-      { metric: "Short-term Savings Obligations", val: "UGX 590,500,000" },
-      { metric: "Calculated Liquidity Coverage Ratio", val: "71.97% (Regulatory threshold: > 15.00%)" },
-      { metric: "Compliance Status", val: "Compliant" }
-    ];
-    content = dataTable(
-      [
-        { header: "Liquidity Indicator", render: (r) => r.metric },
-        { header: "Value / Status", render: (r) => r.val }
-      ],
-      rows
-    );
-  } else {
-    // Basic mock presentation
-    const rows = [
-      { k: "Compiled At", v: new Date().toLocaleString() },
-      { k: "Report Category Class", v: "Institutional Microfinance Return" },
-      { k: "Total Records Scanned", v: "1,245 rows" },
-      { k: "System Integrity Check", v: "PASSED ✓" }
-    ];
-    content = dataTable(
-      [
-        { header: "Compliance Field", render: (r) => r.k },
-        { header: "Value", render: (r) => r.v }
-      ],
-      rows
-    );
+  try {
+    if (rep.key === "trial-balance") {
+      const lines = await api.get("/api/v1/accounting/trial-balance");
+      content = dataTable(
+        [
+          { header: "Account Code", render: (l) => l.account_code },
+          { header: "Account Name", render: (l) => l.account_name },
+          { header: "Debit balance", className: "ledger", render: (l) => `UGX ${formatMoney(l.debit)}` },
+          { header: "Credit balance", className: "ledger", render: (l) => `UGX ${formatMoney(l.credit)}` },
+        ],
+        lines, "No posted journal activity yet."
+      );
+    } else if (rep.key === "balance-sheet") {
+      const data = await api.get(`/api/v1/reports/balance-sheet${asOf ? `?as_of=${asOf}` : ""}`);
+      const rows = [
+        ...data.assets.map((a) => ({ ...a, type: "Asset" })),
+        ...data.liabilities.map((a) => ({ ...a, type: "Liability" })),
+        ...data.equity.map((a) => ({ ...a, type: "Equity" })),
+      ];
+      content = el("div", {}, [
+        dataTable(
+          [
+            { header: "Account", render: (r) => `${r.code} \u2014 ${r.name}` },
+            { header: "Balance", className: "ledger", render: (r) => `UGX ${formatMoney(r.balance)}` },
+            { header: "Classification", render: (r) => badge(r.type) },
+          ],
+          rows, "No account balances yet - post some transactions first."
+        ),
+        el("p", { class: "muted small", style: "margin-top:10px" },
+          `Total assets UGX ${formatMoney(data.total_assets)} \u2014 Total liabilities + equity UGX ${formatMoney(Number(data.total_liabilities) + Number(data.total_equity))} ${data.balances ? "\u2713 Balanced" : "\u26a0 Does not balance - check your journal entries"}`
+        ),
+      ]);
+    } else if (rep.key === "income-statement") {
+      if (!fromDate || !toDate) throw new Error("Select both a From and To date for the Income Statement.");
+      const data = await api.get(`/api/v1/reports/income-statement?start_date=${fromDate}&end_date=${toDate}`);
+      const rows = [
+        ...data.income.map((r) => ({ ...r, type: "Income" })),
+        ...data.expenses.map((r) => ({ ...r, type: "Expense" })),
+      ];
+      content = el("div", {}, [
+        dataTable(
+          [
+            { header: "Account", render: (r) => `${r.code} \u2014 ${r.name}` },
+            { header: "Amount", className: "ledger", render: (r) => `UGX ${formatMoney(r.amount)}` },
+            { header: "Type", render: (r) => badge(r.type) },
+          ],
+          rows, "No income/expense activity in this period."
+        ),
+        el("p", { class: "muted small", style: "margin-top:10px" },
+          `Total income UGX ${formatMoney(data.total_income)} \u2014 Total expenses UGX ${formatMoney(data.total_expenses)} \u2014 Net surplus UGX ${formatMoney(data.net_surplus)}`
+        ),
+      ]);
+    } else if (rep.key === "liquidity-ratio") {
+      const data = await api.get(`/api/v1/reports/liquidity-ratio${asOf ? `?as_of=${asOf}` : ""}`);
+      content = el("div", {}, [
+        dataTable(
+          [
+            { header: "Liquidity Indicator", render: (r) => r.metric },
+            { header: "Value", render: (r) => r.val },
+          ],
+          [
+            { metric: "Liquid assets (cash + mobile money)", val: `UGX ${formatMoney(data.liquid_assets)}` },
+            { metric: "Total deposit liabilities", val: `UGX ${formatMoney(data.total_deposit_liabilities)}` },
+            { metric: "Liquidity ratio", val: `${data.liquidity_ratio_pct}%` },
+          ]
+        ),
+        el("p", { class: "form-error", style: "margin-top:10px" },
+          "This is a simplified internal proxy (liquid assets \u00f7 deposit liabilities), not an official SASRA-verified formula. Confirm against current regulatory guidance before using this for an actual filing."
+        ),
+      ]);
+    } else if (rep.key === "capital-adequacy") {
+      const data = await api.get(`/api/v1/reports/capital-adequacy${asOf ? `?as_of=${asOf}` : ""}`);
+      content = el("div", {}, [
+        dataTable(
+          [
+            { header: "Indicator", render: (r) => r.metric },
+            { header: "Value", render: (r) => r.val },
+          ],
+          [
+            { metric: "Total equity", val: `UGX ${formatMoney(data.total_equity)}` },
+            { metric: "Total assets", val: `UGX ${formatMoney(data.total_assets)}` },
+            { metric: "Capital adequacy ratio", val: `${data.capital_adequacy_ratio_pct}%` },
+          ]
+        ),
+        el("p", { class: "form-error", style: "margin-top:10px" },
+          "This is a simplified proxy (equity \u00f7 total assets), not SASRA's official tiered-capital / risk-weighted-assets formula. Confirm against current regulatory guidance before using this for an actual filing."
+        ),
+      ]);
+    } else if (rep.key === "member-growth") {
+      const data = await api.get("/api/v1/reports/member-growth?months=12");
+      content = el("div", {}, [
+        dataTable(
+          [{ header: "Month", render: (r) => r.month }, { header: "New members", render: (r) => r.new_members }],
+          data.monthly_new_members, "No new members in this window."
+        ),
+        el("p", { class: "muted small", style: "margin-top:10px" },
+          `Total members: ${data.total_members} \u2014 ` +
+          Object.entries(data.by_status).map(([s, c]) => `${s}: ${c}`).join(", ")
+        ),
+      ]);
+    } else if (rep.key === "loan-recovery-perf") {
+      if (!fromDate || !toDate) throw new Error("Select both a From and To date for this report.");
+      const data = await api.get(`/api/v1/reports/loan-disbursement-recovery?start_date=${fromDate}&end_date=${toDate}`);
+      content = dataTable(
+        [{ header: "Metric", render: (r) => r.metric }, { header: "Value", render: (r) => r.val }],
+        [
+          { metric: "Loans disbursed (count)", val: data.loans_disbursed_count },
+          { metric: "Total disbursed", val: `UGX ${formatMoney(data.total_disbursed)}` },
+          { metric: "Total repaid in period", val: `UGX ${formatMoney(data.total_repaid_in_period)}` },
+          { metric: "Active loans", val: data.active_loans },
+          { metric: "Closed loans", val: data.closed_loans },
+          { metric: "Defaulted loans", val: data.defaulted_loans },
+        ]
+      );
+    } else if (rep.key === "mra-return") {
+      content = await buildComplianceReportPanel();
+    } else {
+      content = el("p", { class: "muted" }, "Unknown report type.");
+    }
+  } catch (err) {
+    content = el("p", { class: "form-error" }, err.message || "Failed to generate this report.");
   }
 
   mount(previewEl, [
     el("h4", { style: "color: var(--pine-900);" }, "Compiled Data Preview"),
-    content
+    content,
   ]);
+}
+
+// MRA/regulatory return: logs a real ComplianceReport record (this system
+// tracks report metadata + submission status - it doesn't author the
+// actual regulatory filing document for you).
+async function buildComplianceReportPanel() {
+  const reports = await api.get("/api/v1/risk/compliance-reports").catch(() => []);
+  const holder = el("div", {});
+
+  const logForm = el("form", { style: "margin-bottom:16px;background:var(--pine-50);padding:12px;border-radius:8px" }, [
+    el("div", { class: "field-row" }, [
+      el("div", { class: "field" }, [el("label", {}, "Report type"), el("input", { id: "cr-type", value: "sasra_quarterly", required: true })]),
+      el("div", { class: "field" }, [el("label", {}, "Period"), el("input", { id: "cr-period", placeholder: "e.g. 2026-Q2", required: true })]),
+    ]),
+    el("div", { class: "field" }, [el("label", {}, "File reference (optional)"), el("input", { id: "cr-file" })]),
+    el("div", { class: "field" }, [el("label", {}, "Summary (optional)"), el("textarea", { id: "cr-summary", rows: 2 })]),
+    el("button", { type: "submit", class: "btn btn-primary btn-sm" }, "Log this report"),
+  ]);
+  logForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/api/v1/risk/compliance-reports", {
+        report_type: logForm.querySelector("#cr-type").value,
+        period: logForm.querySelector("#cr-period").value,
+        file_reference: logForm.querySelector("#cr-file").value || null,
+        summary: logForm.querySelector("#cr-summary").value || null,
+      });
+      showToast("Compliance report logged.", "success");
+      refreshCurrentRoute();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  });
+
+  const table = dataTable(
+    [
+      { header: "Type", render: (r) => r.report_type },
+      { header: "Period", render: (r) => r.period },
+      { header: "Status", render: (r) => badge(r.submitted ? "submitted" : "pending") },
+      {
+        header: "",
+        render: (r) => (!r.submitted
+          ? el("button", {
+              class: "btn btn-secondary btn-sm",
+              onclick: async () => {
+                await api.post(`/api/v1/risk/compliance-reports/${r.id}/submit`);
+                showToast("Marked submitted.", "success");
+                refreshCurrentRoute();
+              },
+            }, "Mark submitted")
+          : ""),
+      },
+    ],
+    reports, "No compliance reports logged yet."
+  );
+
+  mount(holder, [logForm, table]);
+  return holder;
 }
 
 // 4. Direct Trigger Export download
 function triggerExport(rep, format) {
-  showToast(`Compiling and downloading ${rep.name} in ${format.toUpperCase()} format...`, "success");
+  showToast(`${format.toUpperCase()} export isn't built yet - use "Compile & Display" to view this report for now.`, "error");
 }
 
 // 5. Automated Schedulers List
@@ -262,7 +385,7 @@ function renderScheduleForm() {
   const emailInput = el("input", { type: "email", placeholder: "manager@sacco.co.ug", required: true });
 
   const form = el("form", { style: "margin-top: 20px; border-top: 1px solid var(--line); padding-top: 15px;" }, [
-    el("h4", {}, "Configure Automated Scheduler"),
+    el("h4", {}, "Add a Reminder"),
     el("div", { class: "field" }, [el("label", {}, "Report Title"), selectReport]),
     el("div", { class: "field-row" }, [
       el("div", { class: "field" }, [el("label", {}, "Frequency / Timing"), cronInput]),
@@ -282,15 +405,10 @@ function renderScheduleForm() {
     };
     schedules.push(newJob);
     localStorage.setItem("sacco_report_schedules", JSON.stringify(schedules));
-    showToast("Automated scheduler job configured.", "success");
+    showToast("Reminder saved.", "success");
     cronInput.value = "";
     emailInput.value = "";
-    
-    // Refresh list view
-    const list = document.querySelector(".card:nth-child(2) .table-wrap");
-    if (list) {
-      goTo("/reports"); // triggers re-render
-    }
+    refreshCurrentRoute();
   });
 
   return form;

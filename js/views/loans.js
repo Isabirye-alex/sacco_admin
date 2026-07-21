@@ -282,7 +282,7 @@ async function openLoanDetail(loanId, content, root) {
 
       // Recovery actions for active loans
       actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => restructureLoan(loan, closeFn, content, root) }, "Restructure Loan"));
-      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => waivePenalties(loan) }, "Waive Penalties"));
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => waivePenalties(loan, closeFn, content, root) }, "Waive Penalties"));
       actions.appendChild(el("button", { class: "btn btn-danger btn-sm", onclick: () => writeOffLoan(loan, closeFn, content, root) }, "Write off Loan"));
       actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => triggerGuarantorNotices(loan) }, "Alert Guarantors"));
     }
@@ -373,12 +373,10 @@ function returnForCorrection(loan, closeParent, content, root) {
       e.preventDefault();
       errorEl.hidden = true;
       try {
-        // Return triggers state reset and raises a warning flag
-        await api.post("/api/v1/risk/flags", {
-          flag_type: "loan_default_risk",
-          description: `Loan ${loan.loan_number} returned for correction: ${correctionNotes.value}`
+        await api.post(`/api/v1/loans/applications/${loan.id}/return-for-correction`, {
+          notes: correctionNotes.value,
         });
-        showToast("Application returned to member portal.", "success");
+        showToast("Application returned for correction \u2014 borrower notified.", "success");
         closeFn(); closeParent();
         await renderTabContent(content, root);
       } catch (err) {
@@ -540,12 +538,14 @@ function openRepaymentForm(loan, closeParent, content, root) {
 
 // 5. Restructure active loans
 function restructureLoan(loan, closeParent, content, root) {
-  openModal(`Restructure Loan — ${loan.loan_number}`, (closeFn) => {
+  openModal(`Restructure Loan \u2014 ${loan.loan_number}`, (closeFn) => {
     const errorEl = el("p", { class: "form-error", hidden: true });
-    const newTermInput = el("input", { type: "number", value: loan.repayment_months, required: true });
+    const newTermInput = el("input", { type: "number", value: loan.repayment_months, required: true, min: "1" });
+    const reasonInput = el("textarea", { rows: 2, required: true, placeholder: "Why is this loan being restructured?" });
     const form = el("form", {}, [
-      el("p", { class: "muted" }, "Modify the loan parameters to adjust to debtor payment profiles."),
-      el("div", { class: "field" }, [el("label", {}, "Revised Term (Months)"), newTermInput]),
+      el("p", { class: "muted" }, "Rebuilds the repayment schedule for the remaining outstanding principal over a new term. Already-paid installments are untouched."),
+      el("div", { class: "field" }, [el("label", {}, "New term (months)"), newTermInput]),
+      el("div", { class: "field" }, [el("label", {}, "Reason"), reasonInput]),
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
@@ -557,12 +557,11 @@ function restructureLoan(loan, closeParent, content, root) {
       e.preventDefault();
       errorEl.hidden = true;
       try {
-        // Restructuring raises a risk audit log
-        await api.post("/api/v1/risk/flags", {
-          flag_type: "multiple_loans",
-          description: `Loan ${loan.loan_number} restructured: Term updated to ${newTermInput.value} months.`
+        await api.post(`/api/v1/loans/applications/${loan.id}/reschedule`, {
+          new_repayment_months: Number(newTermInput.value),
+          reason: reasonInput.value,
         });
-        showToast("Loan restructuring completed successfully.", "success");
+        showToast("Loan restructured \u2014 new schedule generated.", "success");
         closeFn(); closeParent();
         await renderTabContent(content, root);
       } catch (err) {
@@ -574,25 +573,29 @@ function restructureLoan(loan, closeParent, content, root) {
   });
 }
 
-// 6. Waive penalties manually
-async function waivePenalties(loan) {
+// 6. Waive penalties manually - now actually clears penalty_due on unpaid installments
+async function waivePenalties(loan, closeParent, content, root) {
   const ok = await confirmDialog("Are you sure you want to waive all outstanding penalties on this loan account?", "Waive", false);
-  if (ok) {
-    showToast("All penalties on this credit account waived.", "success");
+  if (!ok) return;
+  try {
+    const result = await api.post(`/api/v1/loans/applications/${loan.id}/waive-penalties`);
+    showToast(`Waived UGX ${formatMoney(result.total_waived)} across ${result.installments_waived} installment(s).`, "success");
+    if (closeParent) closeParent();
+    if (content && root) await renderTabContent(content, root);
+  } catch (err) {
+    showToast(err.message, "error");
   }
 }
 
-// 7. Write off delinquent loans
+// 7. Write off delinquent loans - now actually closes the schedule and books the GL loss
 async function writeOffLoan(loan, closeParent, content, root) {
-  const ok = await confirmDialog(`Write off delinquent loan ${loan.loan_number}? This registers a credit write-off asset reduction.`, "Confirm Write-Off", true);
+  const ok = await confirmDialog(`Write off delinquent loan ${loan.loan_number}? This closes the loan and books the outstanding balance as a loss. This cannot be undone.`, "Confirm Write-Off", true);
   if (!ok) return;
   try {
-    // Write-off raises high risk flag and exits the loan status
-    await api.post("/api/v1/risk/flags", {
-      flag_type: "loan_default_risk",
-      description: `DELINQUENT LOAN WRITE-OFF: ${loan.loan_number} written off.`
+    const result = await api.post(`/api/v1/loans/applications/${loan.id}/write-off`, {
+      reason: "Written off via admin portal",
     });
-    showToast("Loan account written off.", "success");
+    showToast(`Loan written off \u2014 UGX ${formatMoney(result.amount_written_off)} booked as a loss.`, "success");
     closeParent();
     await renderTabContent(content, root);
   } catch (err) {
@@ -600,18 +603,13 @@ async function writeOffLoan(loan, closeParent, content, root) {
   }
 }
 
-// 8. Trigger automated guarantor alerts
+// 8. Trigger automated guarantor alerts - now actually notifies the guarantors, not the borrower
 async function triggerGuarantorNotices(loan) {
   const ok = await confirmDialog(`Send SMS collections alert warnings to all registered guarantors of ${loan.loan_number}?`, "Send Alerts", false);
   if (!ok) return;
   try {
-    await api.post("/api/v1/notifications", {
-      member_id: loan.member_id,
-      channel: "sms",
-      subject: "Guarantor collections notice",
-      body: `ALERT: The loan account for ${loan.loan_number} which you guaranteed is in default. Please clear the outstanding amounts.`
-    });
-    showToast("Guarantor notices sent successfully.", "success");
+    const result = await api.post(`/api/v1/loans/applications/${loan.id}/notify-guarantors`);
+    showToast(`Notified ${result.guarantors_notified} guarantor(s).`, "success");
   } catch (err) {
     showToast(err.message, "error");
   }
