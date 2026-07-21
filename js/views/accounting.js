@@ -28,7 +28,7 @@ function createIconSpan(svgString) {
 }
 
 export async function renderAccounting(root) {
-  injectGlobalStylesOnce();
+  // injectGlobalStylesOnce();
 
   const tabs = el("div", { class: "ac-tabs-container" }, [
     tabButton("trial-balance", "Trial Balance", ICONS.trialBalance, root),
