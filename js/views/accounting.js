@@ -4,6 +4,8 @@ import { el, mount, formatMoney, titleCase, dataTable, openModal, showToast } fr
 let active = "trial-balance";
 let accountSearchQuery = "";
 let vendorSearchQuery = "";
+let entriesPerPage = 10;
+let postingDateFilter = "31/12/2021";
 
 // --- Inline SVG Icons ---
 const ICONS = {
@@ -15,10 +17,10 @@ const ICONS = {
   settings: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`,
   search: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>`,
   plus: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>`,
-  trash: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>`
+  trash: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>`,
+  file: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`
 };
 
-// Helper utility to safely create an element containing an inline SVG string
 function createIconSpan(svgString) {
   const span = el("span", { class: "ac-btn-icon-wrapper" });
   span.innerHTML = svgString;
@@ -119,82 +121,177 @@ async function renderTrialBalanceTab(content) {
   ])]);
 }
 
-// --- 2. Chart of Accounts Tree (With real-time searching) ---
+// --- 2. Chart of Accounts (Matching Reference Design Layout) ---
 async function renderAccountsTab(content, root) {
-  const accounts = await api.get("/api/v1/accounting/accounts");
-  
+  let accounts = [];
+  try {
+    accounts = await api.get("/api/v1/accounting/accounts");
+  } catch (e) {
+    accounts = [];
+  }
+
+  // --- Sub-Header Title Strip ---
+  const headerTitleStrip = el("div", { class: "coa-title-strip" }, [
+    el("div", { class: "coa-title-group" }, [
+      el("h2", { class: "coa-main-title" }, "Chart of Accounts"),
+      el("span", { class: "coa-subtitle" }, "UGANDA BREWERIES COPERATIVE SAVINGS & CREDIT SOCIETY LIMITED")
+    ]),
+    el("div", { class: "coa-breadcrumb" }, [
+      el("span", { class: "coa-home-icon" }, "🌐 Home > "),
+      el("span", {}, "Chart of Accounts")
+    ])
+  ]);
+
+  // --- Button Action Bar ---
+  const actionBar = el("div", { class: "coa-action-bar" }, [
+    el("button", { 
+      class: "coa-btn-group-item coa-btn-new", 
+      onclick: () => openAccountModal(content, root) 
+    }, [createIconSpan(ICONS.file), el("span", {}, "New")]),
+    
+    el("div", { class: "coa-btn-dropdown-group" }, [
+      el("button", { class: "coa-btn-group-item" }, "Trial Balance"),
+      el("button", { class: "coa-btn-caret" }, "▾")
+    ]),
+
+    el("div", { class: "coa-btn-dropdown-group" }, [
+      el("button", { class: "coa-btn-group-item" }, "Detailed Trial Balance"),
+      el("button", { class: "coa-btn-caret" }, "▾")
+    ])
+  ]);
+
+  // --- Posting Date Filter Bar ---
+  const postingDateInput = el("input", { 
+    type: "text", 
+    class: "coa-date-input", 
+    value: postingDateFilter 
+  });
+
+  const filterBar = el("div", { class: "coa-filter-bar" }, [
+    el("label", { class: "coa-filter-label" }, "Posting Date Filter"),
+    postingDateInput,
+    el("button", { 
+      class: "coa-btn-set",
+      onclick: () => {
+        postingDateFilter = postingDateInput.value;
+        showToast(`Date filter updated: ${postingDateFilter}`, "info");
+      }
+    }, "Set")
+  ]);
+
+  // --- Table Controls (Show entries + Search) ---
+  const entriesSelect = el("select", { 
+    class: "coa-entries-select",
+    onchange: (e) => {
+      entriesPerPage = parseInt(e.target.value);
+      renderGrid();
+    }
+  }, [
+    el("option", { value: "10", selected: entriesPerPage === 10 }, "10"),
+    el("option", { value: "25", selected: entriesPerPage === 25 }, "25"),
+    el("option", { value: "50", selected: entriesPerPage === 50 }, "50"),
+    el("option", { value: "100", selected: entriesPerPage === 100 }, "100")
+  ]);
+
   const searchInput = el("input", { 
-    class: "ac-search-input", 
-    placeholder: "Search accounts by code or name...", 
+    class: "coa-search-input", 
+    type: "text",
     value: accountSearchQuery,
     oninput: (e) => {
       accountSearchQuery = e.target.value;
-      renderTree();
+      renderGrid();
     }
   });
 
-  const searchIconSpan = el("span", { class: "ac-search-icon" });
-  searchIconSpan.innerHTML = ICONS.search;
-
-  // FIX: Using createIconSpan(ICONS.plus) instead of standard string rendering
-  const header = el("div", { class: "ac-card-header-row" }, [
-    el("div", { class: "ac-search-wrapper" }, [
-      searchIconSpan,
-      searchInput
+  const tableControls = el("div", { class: "coa-table-controls" }, [
+    el("div", { class: "coa-show-entries" }, [
+      el("span", {}, "Show "),
+      entriesSelect,
+      el("span", {}, " entries")
     ]),
-    el("button", { 
-      class: "ac-btn-primary", 
-      onclick: () => openAccountModal(content, root) 
-    }, [createIconSpan(ICONS.plus), el("span", {}, "New Account")]),
+    el("div", { class: "coa-search-group" }, [
+      el("span", {}, "Search: "),
+      searchInput
+    ])
   ]);
 
-  const treeWrapper = el("div", { class: "ac-fade-in" });
+  const gridHolder = el("div", { class: "coa-grid-wrapper ac-fade-in" });
 
-  function renderTree() {
-    const query = accountSearchQuery.toLowerCase().trim();
-    const filtered = accounts.filter(a => 
-      a.code.toLowerCase().includes(query) || 
-      a.name.toLowerCase().includes(query)
-    );
-
-    const types = ["asset", "liability", "equity", "income", "expense"];
-    const grouped = {};
-    types.forEach(t => { 
-      grouped[t] = filtered.filter(a => a.account_type === t); 
-    });
-
-    const treeContent = el("div", { class: "ac-tree" }, 
-      types.map(t => {
-        const children = grouped[t] || [];
-        if (query && children.length === 0) return null;
-
-        return el("div", { class: "ac-tree-node" }, [
-          el("div", { class: "ac-tree-node-header" }, [
-            el("span", { class: "ac-tree-icon" }, "📁"),
-            el("span", { class: "ac-tree-label" }, `${titleCase(t)} Accounts`),
-            el("span", { class: "ac-badge-count" }, children.length)
-          ]),
-          children.length 
-            ? el("ul", { class: "ac-tree-list" }, 
-                children.map(a => el("li", { class: "ac-tree-item ac-fade-in" }, [
-                  el("div", { style: "display: flex; align-items: center; gap: 12px;" }, [
-                    el("span", { class: "ac-code-badge" }, a.code),
-                    el("span", { class: "ac-tree-item-name" }, a.name)
-                  ]),
-                  el("span", { class: "ac-status-badge secondary" }, titleCase(a.account_type))
-                ]))
-              )
-            : el("div", { class: "ac-tree-empty" }, "No accounts registered.")
-        ]);
-      }).filter(Boolean)
-    );
-
-    mount(treeWrapper, [treeContent]);
+  async function handleDelete(accountId) {
+    if (confirm("Are you sure you want to delete this account?")) {
+      try {
+        await api.delete(`/api/v1/accounting/accounts/${accountId}`);
+        showToast("Account deleted.", "success");
+        await renderAccountsTab(content, root);
+      } catch (err) {
+        showToast(err.message || "Failed to delete account.", "error");
+      }
+    }
   }
 
-  renderTree();
-  mount(content, [header, treeWrapper]);
-  setTimeout(() => searchInput.focus(), 50);
+  function renderGrid() {
+    const query = accountSearchQuery.toLowerCase().trim();
+    const filtered = accounts.filter(a => 
+      (a.code && a.code.toLowerCase().includes(query)) || 
+      (a.name && a.name.toLowerCase().includes(query)) ||
+      (a.category && a.category.toLowerCase().includes(query)) ||
+      (a.subcategory && a.subcategory.toLowerCase().includes(query))
+    );
+
+    const paginated = filtered.slice(0, entriesPerPage);
+
+    const table = el("table", { class: "coa-data-table" }, [
+      el("thead", {}, [
+        el("tr", {}, [
+          el("th", { class: "coa-col-sortable" }, ["No.", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { class: "coa-col-sortable" }, ["Name", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { class: "coa-col-sortable" }, ["Income/Balance", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { class: "coa-col-sortable" }, ["Account Category", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { class: "coa-col-sortable" }, ["Account Subcategory", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { class: "coa-col-sortable" }, ["Account Type", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { class: "coa-col-sortable text-right" }, ["Balance", el("span", { class: "coa-sort-icon" }, "⇅")]),
+          el("th", { style: "width: 40px;" }, "")
+        ])
+      ]),
+      el("tbody", {}, 
+        paginated.length > 0 
+          ? paginated.map(a => {
+              const balanceVal = Number(a.balance || 0);
+              return el("tr", { class: "coa-row-item" }, [
+                el("td", { class: "coa-cell-code" }, a.code || "—"),
+                el("td", { class: "coa-cell-name" }, a.name || "—"),
+                el("td", {}, a.income_balance || "Balance Sheet"),
+                el("td", {}, a.category || titleCase(a.account_type || "Assets")),
+                el("td", {}, a.subcategory || "Current Assets"),
+                el("td", {}, a.type || "Posting"),
+                el("td", { class: "coa-cell-balance text-right" }, formatMoney(balanceVal)),
+                el("td", { class: "text-center" }, [
+                  el("button", { 
+                    class: "coa-btn-delete", 
+                    title: "Delete Account",
+                    onclick: () => handleDelete(a.id)
+                  }, "🗑")
+                ])
+              ]);
+            })
+          : [el("tr", {}, [el("td", { colspan: "8", class: "coa-empty-cell" }, "No matching chart of accounts found.")])]
+      )
+    ]);
+
+    mount(gridHolder, [table]);
+  }
+
+  renderGrid();
+
+  mount(content, [
+    el("div", { class: "coa-container" }, [
+      headerTitleStrip,
+      actionBar,
+      filterBar,
+      tableControls,
+      gridHolder
+    ])
+  ]);
 }
 
 function openAccountModal(content, root) {
@@ -202,16 +299,51 @@ function openAccountModal(content, root) {
     const errorEl = el("p", { class: "form-error", hidden: true });
     
     const form = el("form", { class: "ac-form" }, [
-      el("div", { class: "ac-field" }, [el("label", {}, "Code"), el("input", { id: "coa-code", placeholder: "e.g. 1010", required: true })]),
-      el("div", { class: "ac-field" }, [el("label", {}, "Name"), el("input", { id: "coa-name", placeholder: "e.g. Cash in Hand", required: true })]),
+      el("div", { class: "field-row" }, [
+        el("div", { class: "ac-field" }, [el("label", {}, "Account No. / Code"), el("input", { id: "coa-code", placeholder: "e.g. 1200", required: true })]),
+        el("div", { class: "ac-field" }, [el("label", {}, "Account Name"), el("input", { id: "coa-name", placeholder: "e.g. Petty Cash", required: true })])
+      ]),
+      el("div", { class: "field-row" }, [
+        el("div", { class: "ac-field" }, [
+          el("label", {}, "Income / Balance"),
+          el("select", { id: "coa-income-balance" }, [
+            el("option", { value: "Balance Sheet" }, "Balance Sheet"),
+            el("option", { value: "Income Statement" }, "Income Statement")
+          ])
+        ]),
+        el("div", { class: "ac-field" }, [
+          el("label", {}, "Account Category"),
+          el("select", { id: "coa-category" }, [
+            el("option", { value: "Assets" }, "Assets"),
+            el("option", { value: "Liabilities" }, "Liabilities"),
+            el("option", { value: "Equity" }, "Equity"),
+            el("option", { value: "Income" }, "Income"),
+            el("option", { value: "Expenses" }, "Expenses")
+          ])
+        ])
+      ]),
+      el("div", { class: "field-row" }, [
+        el("div", { class: "ac-field" }, [
+          el("label", {}, "Account Subcategory"),
+          el("input", { id: "coa-subcategory", placeholder: "e.g. Current Assets, Equity...", defaultValue: "Current Assets" })
+        ]),
+        el("div", { class: "ac-field" }, [
+          el("label", {}, "Account Type"),
+          el("select", { id: "coa-type" }, [
+            el("option", { value: "Posting" }, "Posting"),
+            el("option", { value: "Heading" }, "Heading"),
+            el("option", { value: "Total" }, "Total")
+          ])
+        ])
+      ]),
       el("div", { class: "ac-field" }, [
-        el("label", {}, "Type"),
-        el("select", { id: "coa-type" }, ["asset", "liability", "equity", "income", "expense"].map((t) => el("option", { value: t }, titleCase(t)))),
+        el("label", {}, "Opening Balance (UGX)"),
+        el("input", { id: "coa-balance", type: "number", step: "0.01", defaultValue: "0.00" })
       ]),
       errorEl,
       el("div", { class: "modal-actions" }, [
         el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
-        el("button", { type: "submit", class: "btn btn-primary" }, "Create"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Create Account"),
       ]),
     ]);
 
@@ -219,16 +351,23 @@ function openAccountModal(content, root) {
       e.preventDefault();
       errorEl.hidden = true;
       try {
-        await api.post("/api/v1/accounting/accounts", {
+        const payload = {
           code: form.querySelector("#coa-code").value,
           name: form.querySelector("#coa-name").value,
-          account_type: form.querySelector("#coa-type").value,
-        });
+          income_balance: form.querySelector("#coa-income-balance").value,
+          category: form.querySelector("#coa-category").value,
+          account_type: form.querySelector("#coa-category").value.toLowerCase(),
+          subcategory: form.querySelector("#coa-subcategory").value,
+          type: form.querySelector("#coa-type").value,
+          balance: Number(form.querySelector("#coa-balance").value || 0)
+        };
+
+        await api.post("/api/v1/accounting/accounts", payload);
         showToast("Account created successfully.", "success");
         await renderTabContent(content, root);
         closeFn();
       } catch (err) {
-        errorEl.textContent = err.message;
+        errorEl.textContent = err.message || "Failed to create account.";
         errorEl.hidden = false;
       }
     });
@@ -424,7 +563,7 @@ function infoRow(label, val) {
   ]);
 }
 
-// --- 5. Vendor & Supplies Manager (With Search Filters) ---
+// --- 5. Vendor & Supplies Manager ---
 async function renderVendorsTab(content, root) {
   let vendors = JSON.parse(localStorage.getItem("sacco_vendors") || "[]");
   if (!vendors.length) {
@@ -450,7 +589,6 @@ async function renderVendorsTab(content, root) {
   const searchIconSpan = el("span", { class: "ac-search-icon" });
   searchIconSpan.innerHTML = ICONS.search;
 
-  // FIX: Using createIconSpan(ICONS.plus) instead of raw string rendering for "Register Vendor"
   const header = el("div", { class: "ac-card-header-row" }, [
     el("div", { class: "ac-search-wrapper" }, [
       searchIconSpan,
@@ -780,20 +918,12 @@ function injectGlobalStylesOnce() {
       color: #94a3b8;
       display: flex;
     }
-    
-    /* Dedicated Wrapper to host inline SVGs safely */
-    .ac-btn-icon-wrapper {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
-    }
 
     /* Buttons */
     .ac-btn-primary {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       background: #0f172a;
       color: #ffffff;
       border: none;
@@ -843,207 +973,200 @@ function injectGlobalStylesOnce() {
       background: #ffe4e6;
     }
 
-    /* Tree View Structuring */
-    .ac-tree {
+    /* --- CHART OF ACCOUNTS CUSTOM DESIGN SYSTEM --- */
+    .coa-container {
+      background: #ffffff;
+      padding: 16px 20px;
+      font-family: inherit;
+      color: #333333;
+    }
+    .coa-title-strip {
       display: flex;
-      flex-direction: column;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 20px;
+    }
+    .coa-title-group {
+      display: flex;
+      align-items: baseline;
       gap: 12px;
     }
-    .ac-tree-node {
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      overflow: hidden;
-      background: #ffffff;
-    }
-    .ac-tree-node-header {
-      display: flex;
-      align-items: center;
-      background: #f8fafc;
-      padding: 14px 20px;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .ac-tree-icon {
-      font-size: 16px;
-      margin-right: 8px;
-    }
-    .ac-tree-label {
-      font-weight: 700;
-      color: #1e293b;
-    }
-    .ac-badge-count {
-      margin-left: 10px;
-      background: #e2e8f0;
-      color: #475569;
-      font-size: 12px;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 100px;
-    }
-    .ac-tree-list {
-      list-style: none;
-      padding: 0;
+    .coa-main-title {
+      font-size: 24px;
+      font-weight: 400;
+      color: #444444;
       margin: 0;
     }
-    .ac-tree-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 20px;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .ac-tree-item:last-child {
-      border-bottom: none;
-    }
-    .ac-tree-item-name {
+    .coa-subtitle {
+      font-size: 13px;
+      color: #888888;
       font-weight: 500;
-      color: #334155;
+      letter-spacing: 0.5px;
     }
-    .ac-tree-empty {
-      padding: 16px 20px;
-      color: #94a3b8;
-      font-size: 13px;
-    }
-
-    /* Modern Badges & Helpers */
-    .ac-code-badge {
-      font-family: monospace;
-      font-weight: 700;
-      background: #f1f5f9;
-      color: #475569;
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-size: 13px;
-    }
-    .ac-status-badge {
+    .coa-breadcrumb {
       font-size: 12px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 100px;
+      color: #666666;
     }
-    .ac-status-badge.success {
-      background: #ecfdf5;
-      color: #059669;
-    }
-    .ac-status-badge.warning {
-      background: #fffbeb;
-      color: #d97706;
-    }
-    .ac-status-badge.secondary {
-      background: #f1f5f9;
-      color: #64748b;
-    }
-
-    /* Forms */
-    .ac-form {
+    .coa-action-bar {
       display: flex;
-      flex-direction: column;
-      gap: 16px;
+      gap: 10px;
+      margin-bottom: 18px;
     }
-    .ac-field {
+    .coa-btn-group-item {
       display: flex;
-      flex-direction: column;
+      align-items: center;
       gap: 6px;
-    }
-    .ac-field label {
-      font-weight: 600;
-      color: #475569;
+      background: #f4f4f4;
+      border: 1px solid #dcdcdc;
+      color: #333333;
+      padding: 6px 14px;
       font-size: 13px;
+      border-radius: 3px;
+      cursor: pointer;
     }
-    .ac-form input, .ac-form select {
-      padding: 10px 14px;
-      font-size: 14px;
-      border: 1.5px solid #e2e8f0;
-      border-radius: 10px;
-      outline: none;
-      transition: all 0.15s ease;
+    .coa-btn-group-item:hover {
+      background: #e9e9e9;
     }
-    .ac-form input:focus, .ac-form select:focus {
-      border-color: #3b82f6;
+    .coa-btn-new {
+      background: #337ab7;
+      color: #ffffff;
+      border-color: #2e6da4;
     }
-
-    /* Journal Entry Dynamic Lines */
-    .ac-je-lines-container {
+    .coa-btn-new:hover {
+      background: #286090;
+    }
+    .coa-btn-dropdown-group {
       display: flex;
-      flex-direction: column;
-      gap: 8px;
-      max-height: 350px;
-      overflow-y: auto;
-      padding: 4px;
     }
-    .ac-je-row {
+    .coa-btn-dropdown-group .coa-btn-group-item {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .coa-btn-caret {
+      background: #f4f4f4;
+      border: 1px solid #dcdcdc;
+      border-left: none;
+      padding: 6px 10px;
+      font-size: 11px;
+      border-top-right-radius: 3px;
+      border-bottom-right-radius: 3px;
+      cursor: pointer;
+      color: #555;
+    }
+    .coa-filter-bar {
       display: flex;
-      gap: 12px;
       align-items: center;
-      transition: all 0.15s ease;
+      gap: 10px;
+      margin-bottom: 22px;
     }
-    .ac-je-row select {
-      width: 100%;
-    }
-    .ac-je-balance-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #f8fafc;
-      padding: 14px 20px;
-      border-radius: 12px;
-      font-size: 14px;
-      border: 1px dashed #cbd5e1;
-      margin-top: 14px;
-    }
-
-    /* Table & Totals Footer styling */
-    .ac-summary-footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: 32px;
-      margin-top: 20px;
-      padding-top: 16px;
-      border-top: 1px solid #f1f5f9;
+    .coa-filter-label {
       font-weight: 700;
-      font-size: 15px;
-      color: #0f172a;
+      font-size: 13px;
+      color: #333333;
     }
-    .ac-info-row {
+    .coa-date-input {
+      padding: 5px 10px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      font-size: 13px;
+      width: 140px;
+    }
+    .coa-btn-set {
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+      padding: 5px 12px;
+      font-size: 13px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .coa-btn-set:hover {
+      background: #e8e8e8;
+    }
+    .coa-table-controls {
       display: flex;
       justify-content: space-between;
-      padding: 10px 0;
-      border-bottom: 1px solid #f1f5f9;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: #333333;
+    }
+    .coa-entries-select {
+      padding: 4px 8px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      margin: 0 4px;
+    }
+    .coa-search-input {
+      padding: 4px 8px;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      margin-left: 6px;
+      outline: none;
+    }
+    .coa-search-input:focus {
+      border-color: #66afff;
+    }
+    .coa-grid-wrapper {
+      width: 100%;
+      overflow-x: auto;
+    }
+    .coa-data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+    .coa-data-table th {
+      padding: 10px 12px;
+      border-bottom: 2px solid #ddd;
+      font-weight: 700;
+      color: #333333;
+      white-space: nowrap;
+    }
+    .coa-col-sortable {
+      cursor: pointer;
+    }
+    .coa-sort-icon {
+      font-size: 11px;
+      margin-left: 6px;
+      color: #aaa;
+    }
+    .coa-data-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #eee;
+      color: #555555;
+      white-space: nowrap;
+    }
+    .coa-row-item:hover {
+      background-color: #f9f9f9;
+    }
+    .coa-cell-code {
+      color: #337ab7;
+      font-weight: 500;
+    }
+    .coa-cell-balance {
+      color: #337ab7;
+    }
+    .coa-btn-delete {
+      background: transparent;
+      border: none;
+      color: #337ab7;
+      cursor: pointer;
       font-size: 14px;
     }
-
-    /* Loading Spinner */
-    .ac-spinner-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 40px;
+    .coa-btn-delete:hover {
+      color: #d9534f;
     }
-    .ac-spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid #e2e8f0;
-      border-top-color: #0f172a;
-      border-radius: 50%;
-      animation: ac-spin 0.6s linear infinite;
+    .coa-empty-cell {
+      text-align: center;
+      padding: 30px !important;
+      color: #999;
     }
-
-    /* Micro Animations */
-    @keyframes ac-spin {
-      to { transform: rotate(360deg); }
+    .text-right {
+      text-align: right;
     }
-    .ac-fade-in {
-      animation: acFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-    .ac-slide-up {
-      animation: acSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    }
-    @keyframes acFadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    @keyframes acSlideUp {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
+    .text-center {
+      text-align: center;
     }
   `;
   document.head.appendChild(style);
