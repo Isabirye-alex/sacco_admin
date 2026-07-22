@@ -59,9 +59,10 @@ export function computeCreditScore({ savingsBalance = 0, shareValue = 0, request
 }
 
 function scoreSavings(savings, requested) {
-  if (requested <= 0) return 100;
+  // 0-200. More savings relative to loan = higher score.
+  if (requested <= 0) return 100; // No loan context, neutral
   const ratio = savings / Math.max(requested, 1);
-  if (ratio >= 1.0) return 200;
+  if (ratio >= 1.0) return 200;       // 100% cover
   if (ratio >= 0.75) return 170;
   if (ratio >= 0.5) return 140;
   if (ratio >= 0.25) return 100;
@@ -70,6 +71,7 @@ function scoreSavings(savings, requested) {
 }
 
 function scoreShares(shares, requested) {
+  // 0-200. Share capital acts as collateral. Standard 3x cap.
   if (requested <= 0) return 100;
   const ratio = shares / Math.max(requested, 1);
   if (ratio >= 3.0) return 200;
@@ -81,7 +83,7 @@ function scoreShares(shares, requested) {
 }
 
 function scoreHistory(loans) {
-  if (!loans.length) return 100;
+  if (!loans.length) return 100; // No history = neutral, not penalised
   let score = 100;
   let active = 0, defaulted = 0, closed = 0, rejected = 0;
   loans.forEach((l) => {
@@ -205,47 +207,42 @@ export async function loadWorkflowQueue(api) {
     items.push({
       id: `loan-${l.id}`,
       type: "Loan Application",
-      priority: l.amount_requested > 5000000 ? "HIGH" : "NORMAL",
-      badgeVal: l.status || "pending",
-      description: `${l.loan_number} — UGX ${formatMoney(l.amount_requested)} (${l.repayment_months || 12} mo)`,
-      actionLabel: "Review Application",
-      route: "/loans",
+      priority: l.amount_requested > 5000000 ? "high" : "normal",
+      description: `${l.loan_number} — UGX ${formatMoney(l.amount_requested)} (${l.repayment_months} mo)`,
+      action: "Approve / Reject",
+      href: `#/loans`,
       created_at: l.created_at,
       entity: l,
     });
   });
-
   flags.forEach((f) => {
     items.push({
       id: `flag-${f.id}`,
       type: "Risk Flag",
-      priority: ["ghost_member", "aml_suspicious_deposit"].includes(f.flag_type) ? "HIGH" : "NORMAL",
-      badgeVal: "High Risk",
+      priority: ["ghost_member", "aml_suspicious_deposit"].includes(f.flag_type) ? "high" : "normal",
       description: f.description || titleCase(f.flag_type),
-      actionLabel: "Investigate",
-      route: "/risk",
-      created_at: f.created_at || new Date().toISOString(),
+      action: "Investigate / Resolve",
+      href: `#/risk`,
+      created_at: f.created_at,
       entity: f,
     });
   });
-
   (members.items || members || []).forEach((m) => {
     items.push({
       id: `member-${m.id}`,
       type: "Member Verification",
-      priority: "NORMAL",
-      badgeVal: "KYC Pending",
+      priority: "normal",
       description: `${m.first_name} ${m.last_name} (${m.member_number})`,
-      actionLabel: "Verify Member",
-      route: "/members",
+      action: "Approve / Reject registration",
+      href: `#/members`,
       created_at: m.date_joined,
       entity: m,
     });
   });
 
   items.sort((a, b) => {
-    const pa = a.priority === "HIGH" ? 0 : 1;
-    const pb = b.priority === "HIGH" ? 0 : 1;
+    const pa = a.priority === "high" ? 0 : 1;
+    const pb = b.priority === "high" ? 0 : 1;
     if (pa !== pb) return pa - pb;
     return new Date(b.created_at || 0) - new Date(a.created_at || 0);
   });
@@ -253,9 +250,7 @@ export async function loadWorkflowQueue(api) {
   return items;
 }
 
-function titleCase(s) {
-  return String(s || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
+function titleCase(s) { return String(s || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()); }
 
 // ============================================================================
 // SCHEDULED REPORTS - persists in localStorage with cron expression
@@ -318,6 +313,7 @@ export function relativeTime(iso) {
 // ============================================================================
 
 export function buildCommandIndex(routes) {
+  // routes = [{path, title, group, keywords: []}, ...]
   return routes.map((r) => ({
     ...r,
     search: `${r.title} ${r.group || ""} ${(r.keywords || []).join(" ")}`.toLowerCase(),
