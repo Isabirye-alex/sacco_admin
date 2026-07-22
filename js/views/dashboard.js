@@ -1,22 +1,42 @@
 import { api } from "../api.js";
 import { API_BASE_URL } from "../config.js";
 import { getCurrentUser } from "../auth.js";
-import { el, mount, formatMoney, formatDateTime, showToast, refreshIcons } from "../utils.js";
-import { StatCard, ProgressBar } from "../ui.js";
-import { el, mount, formatMoney, formatDate, formatDateTime, badge, openModal, showToast, refreshIcons } from "../utils.js";
-import { StatCard, Sparkline, KeyValueGrid, ProgressBar, EmptyState, ErrorState, ColorChip, MetricDelta, Card } from "../ui.js";
+import { 
+  el, 
+  mount, 
+  formatMoney, 
+  formatDate, 
+  formatDateTime, 
+  badge, 
+  openModal, 
+  showToast, 
+  refreshIcons 
+} from "../utils.js";
+import { 
+  StatCard, 
+  Sparkline, 
+  KeyValueGrid, 
+  ProgressBar, 
+  EmptyState, 
+  ErrorState, 
+  ColorChip, 
+  MetricDelta, 
+  Card 
+} from "../ui.js";
 import { goTo } from "../router.js";
-import { loanAgingBuckets } from "../domain.js";
-
 import { loanAgingBuckets } from "../domain.js";
 
 let activeTelemetryInterval = null;
 const telemetryHistory = { timestamps: [], latency: [] };
-
 const filterState = { dateRange: "monthly", branch: "all" };
-const telemetryHistory = { timestamps: [], latency: [] };
 
-const filterState = { dateRange: "monthly", branch: "all" };
+// Helper to calculate greeting based on current time
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "morning";
+  if (hour < 18) return "afternoon";
+  return "evening";
+}
 
 // Formats a number as a whole-shilling UGX string, e.g. "UGX 12,345".
 function fmtUGX(value) {
@@ -85,11 +105,11 @@ export async function renderDashboard(root) {
   ]);
 
   const kpiGrid = el("div", { class: "grid grid-5", id: "kpi-grid", style: "margin-bottom: 20px;" });
-  kpiGrid.appendChild(statPlaceholder("Total Membership"));
-  kpiGrid.appendChild(statPlaceholder("Total Deposits"));
-  kpiGrid.appendChild(statPlaceholder("Loan Portfolio"));
-  kpiGrid.appendChild(statPlaceholder("NPL Ratio"));
-  kpiGrid.appendChild(statPlaceholder("Total Liquidity"));
+  kpiGrid.appendChild(statCardPlaceholder("Total Membership"));
+  kpiGrid.appendChild(statCardPlaceholder("Total Deposits"));
+  kpiGrid.appendChild(statCardPlaceholder("Loan Portfolio"));
+  kpiGrid.appendChild(statCardPlaceholder("NPL Ratio"));
+  kpiGrid.appendChild(statCardPlaceholder("Total Liquidity"));
 
   const chartsGrid = el("div", { class: "charts-grid", id: "charts-grid" });
   chartsGrid.appendChild(el("div", { class: "spinner" }));
@@ -112,7 +132,7 @@ export async function renderDashboard(root) {
   telemetryHistory.latency = [];
 
   startLiveTelemetry();
-  await refreshDashboardData();
+  await refreshData();
 
   window.addEventListener('hashchange', function cleanupDashboard() {
     if (activeTelemetryInterval) {
@@ -165,44 +185,39 @@ function startLiveTelemetry() {
     const rttElement = document.getElementById('telemetry-rtt');
     const uptimeElement = document.getElementById('telemetry-uptime');
     const liveDot = document.getElementById('telemetry-live-dot');
-    const memoryElement = document.getElementById('telemetry-sub-memory');
 
-    // Real round-trip time to the ACTUAL backend (not a relative same-origin
-    // path - the frontend and API are on different hosts, so a relative
-    // fetch would silently check the wrong server).
     const start = performance.now();
     let healthy = false;
     try {
       const res = await fetch(`${API_BASE_URL}/health`, { method: "GET", cache: "no-store" });
-      rtt = Math.round(performance.now() - start);
+      currentRtt = Math.round(performance.now() - start);
       healthy = res.ok;
     } catch {
       currentRtt = null;
       healthy = false;
     }
 
-    if (rttEl) rttEl.textContent = rtt !== null ? `${rtt} ms` : "— ms";
-    if (statusEl) statusEl.textContent = healthy ? "Live" : "Offline";
-    if (uptimeEl) {
-      uptimeEl.textContent = healthy ? "100%" : "—";
-      uptimeEl.style.color = healthy ? "var(--success)" : "var(--ink-400)";
+    if (rttElement) rttElement.textContent = currentRtt !== null ? `${currentRtt} ms` : "— ms";
+    if (uptimeElement) {
+      uptimeElement.textContent = healthy ? "100%" : "—";
+      uptimeElement.style.color = healthy ? "var(--success)" : "var(--ink-400)";
     }
-    if (dotEl) {
-      dotEl.style.background = healthy ? "var(--success)" : "var(--danger)";
-      dotEl.style.boxShadow = healthy ? "0 0 0 4px rgba(27, 75, 67, 0.15)" : "0 0 0 4px rgba(179, 38, 30, 0.15)";
+    if (liveDot) {
+      liveDot.style.color = healthy ? "var(--success)" : "var(--danger)";
     }
 
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     telemetryHistory.timestamps.push(now);
-    telemetryHistory.latency.push(rtt || 0);
+    telemetryHistory.latency.push(currentRtt || 0);
     if (telemetryHistory.timestamps.length > 20) {
       telemetryHistory.timestamps.shift();
       telemetryHistory.latency.shift();
     }
-    renderTelemetryChart();
+    renderStreamingTelemetryChart();
   };
-  update();
-  activeTelemetryInterval = setInterval(update, 5000);
+
+  updateMetrics();
+  activeTelemetryInterval = setInterval(updateMetrics, 5000);
 }
 
 function renderStreamingTelemetryChart() {
@@ -262,11 +277,6 @@ async function refreshData() {
 
     const totalMembership = filteredMembers.length;
     const activeMembership = filteredMembers.filter((m) => m.status === "active").length;
-    const newThisMonth = filteredMembers.filter((m) => {
-      const d = new Date(m.date_joined);
-      const now = new Date();
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    }).length;
 
     let totalSavings = 0;
     tbData.forEach((tb) => {
@@ -301,10 +311,6 @@ async function refreshData() {
         totalLiquidity += Number(tb.debit) - Number(tb.credit);
       }
     });
-
-    // Pull sparkline history (or fabricate trend from current data)
-    const historyLoans = filteredLoans.slice(-6).map((l) => Number(l.amount_approved || l.amount_requested || 0));
-    const sparkData = historyLoans.length > 1 ? historyLoans : [loanPortfolio * 0.9, loanPortfolio * 0.95, loanPortfolio * 0.97, loanPortfolio * 0.99, loanPortfolio];
 
     mount(kpiGrid, [
       statCard("Total Membership", `${totalMembership}`, `${activeMembership} active members`, "good", "/members"),
@@ -348,6 +354,7 @@ function matchesBranch(branchId) {
   if (filterState.branch === "all") return true;
   return branchId === filterState.branch;
 }
+
 function matchesDate(dateStr) {
   if (filterState.dateRange === "all" || !dateStr) return true;
   const itemDate = new Date(dateStr);
@@ -415,7 +422,7 @@ async function renderVisualCharts(root) {
   ], { ...layout, barmode: "group", xaxis: { title: "Month" }, yaxis: { title: "UGX Amount" } }, config);
 
   if (!trends.product_distribution.length) {
-    showUnavailable("chart-product-dist", "No active savings balances yet.");
+    document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>No active savings balances yet.</p>";
   } else {
     Plotly.newPlot("chart-product-dist", [
       {
@@ -455,7 +462,7 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
 
   queueItems.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  if (!queue.length) {
+  if (!queueItems.length) {
     cardEl.appendChild(el("div", { class: "table-empty" }, "Queue clear. Nothing needs your review."));
     return;
   }
