@@ -1,8 +1,8 @@
 import { api } from "../api.js";
 import { API_BASE_URL } from "../config.js";
 import { getCurrentUser } from "../auth.js";
-import { el, mount, formatMoney, formatDate, formatDateTime, badge, openModal, showToast, refreshIcons } from "../utils.js";
-import { StatCard, Sparkline, KeyValueGrid, ProgressBar, EmptyState, ErrorState, ColorChip, MetricDelta, Card } from "../ui.js";
+import { el, mount, formatMoney, formatDateTime, showToast, refreshIcons } from "../utils.js";
+import { StatCard, ProgressBar } from "../ui.js";
 import { goTo } from "../router.js";
 import { loanAgingBuckets } from "../domain.js";
 
@@ -10,6 +10,11 @@ let activeTelemetryInterval = null;
 const telemetryHistory = { timestamps: [], latency: [] };
 
 const filterState = { dateRange: "monthly", branch: "all" };
+
+// Formats a number as a whole-shilling UGX string, e.g. "UGX 12,345".
+function fmtUGX(value) {
+  return `UGX ${formatMoney(value).split(".")[0]}`;
+}
 
 export async function renderDashboard(root) {
   const user = getCurrentUser();
@@ -24,23 +29,39 @@ export async function renderDashboard(root) {
         el("p", { class: "page-subtitle muted" }, "Your portfolio at a glance — refreshed every minute."),
       ]),
       el("div", { class: "page-header-actions" }, [
-        el("select", {
-          class: "select-sm",
-          onchange: (e) => { filterState.dateRange = e.target.value; refreshData(); }
-        }, [
-          el("option", { value: "all" }, "All Time"),
-          el("option", { value: "daily", selected: filterState.dateRange === "daily" }, "Today"),
-          el("option", { value: "weekly", selected: filterState.dateRange === "weekly" }, "This Week"),
-          el("option", { value: "monthly", selected: filterState.dateRange === "monthly" }, "This Month"),
-          el("option", { value: "ytd", selected: filterState.dateRange === "ytd" }, "Year to Date"),
-        ]),
-        el("select", {
-          class: "select-sm",
-          onchange: (e) => { filterState.branch = e.target.value; refreshData(); }
-        }, [
-          el("option", { value: "all" }, "All Branches"),
-          ...branches.map((b) => el("option", { value: b.id }, b.name)),
-        ]),
+        el(
+          "select",
+          {
+            class: "select-sm",
+            "aria-label": "Filter by date range",
+            onchange: (e) => {
+              filterState.dateRange = e.target.value;
+              refreshData();
+            },
+          },
+          [
+            el("option", { value: "all", selected: filterState.dateRange === "all" }, "All Time"),
+            el("option", { value: "daily", selected: filterState.dateRange === "daily" }, "Today"),
+            el("option", { value: "weekly", selected: filterState.dateRange === "weekly" }, "This Week"),
+            el("option", { value: "monthly", selected: filterState.dateRange === "monthly" }, "This Month"),
+            el("option", { value: "ytd", selected: filterState.dateRange === "ytd" }, "Year to Date"),
+          ]
+        ),
+        el(
+          "select",
+          {
+            class: "select-sm",
+            "aria-label": "Filter by branch",
+            onchange: (e) => {
+              filterState.branch = e.target.value;
+              refreshData();
+            },
+          },
+          [
+            el("option", { value: "all", selected: filterState.branch === "all" }, "All Branches"),
+            ...branches.map((b) => el("option", { value: b.id, selected: filterState.branch === b.id }, b.name)),
+          ]
+        ),
         el("button", { class: "btn btn-primary btn-sm", onclick: () => goTo("/loans?status=pending") }, [
           el("i", { "data-lucide": "clipboard-check", class: "icon" }),
           "Review queue",
@@ -83,18 +104,9 @@ export async function renderDashboard(root) {
   chartsGrid.appendChild(el("div", { class: "spinner" }));
 
   const bottomGrid = el("div", { class: "grid grid-3", style: "margin-top: 20px;" }, [
-    el("div", { class: "card", id: "aging-card" }, [
-      el("h3", {}, "Loan Aging"),
-      el("div", { class: "spinner", style: "margin: 20px 0;" }),
-    ]),
-    el("div", { class: "card", id: "approvals-card" }, [
-      el("h3", {}, "Pending Approvals"),
-      el("div", { class: "spinner", style: "margin: 20px 0;" }),
-    ]),
-    el("div", { class: "card", id: "activity-card" }, [
-      el("h3", {}, "Recent Activity"),
-      el("div", { class: "spinner", style: "margin: 20px 0;" }),
-    ]),
+    el("div", { class: "card", id: "aging-card" }, [el("h3", {}, "Loan Aging"), el("div", { class: "spinner", style: "margin: 20px 0;" })]),
+    el("div", { class: "card", id: "approvals-card" }, [el("h3", {}, "Pending Approvals"), el("div", { class: "spinner", style: "margin: 20px 0;" })]),
+    el("div", { class: "card", id: "activity-card" }, [el("h3", {}, "Recent Activity"), el("div", { class: "spinner", style: "margin: 20px 0;" })]),
   ]);
 
   mount(root, [header, telemetryCard, kpiGrid, chartsGrid, bottomGrid]);
@@ -115,10 +127,7 @@ function greeting() {
 }
 
 function statPlaceholder(label) {
-  return el("div", { class: "card stat-card" }, [
-    el("div", { class: "label" }, label),
-    el("div", { class: "spinner-inline" }),
-  ]);
+  return el("div", { class: "card stat-card" }, [el("div", { class: "label" }, label), el("div", { class: "spinner-inline" })]);
 }
 
 function startLiveTelemetry() {
@@ -128,13 +137,25 @@ function startLiveTelemetry() {
     const uptimeEl = document.getElementById("telemetry-uptime");
     const dotEl = document.getElementById("dot-pulse");
 
+    // The dashboard has been navigated away from and its DOM removed —
+    // stop polling instead of ticking forever in the background.
+    if (!rttEl && activeTelemetryInterval) {
+      clearInterval(activeTelemetryInterval);
+      activeTelemetryInterval = null;
+      return;
+    }
+
     const start = performance.now();
-    let rtt = null, healthy = false;
+    let rtt = null,
+      healthy = false;
     try {
       const res = await fetch(`${API_BASE_URL}/health`, { method: "GET", cache: "no-store" });
       rtt = Math.round(performance.now() - start);
       healthy = res.ok;
-    } catch { rtt = null; healthy = false; }
+    } catch {
+      rtt = null;
+      healthy = false;
+    }
 
     if (rttEl) rttEl.textContent = rtt !== null ? `${rtt} ms` : "— ms";
     if (statusEl) statusEl.textContent = healthy ? "Live" : "Offline";
@@ -161,18 +182,31 @@ function startLiveTelemetry() {
 }
 
 function renderTelemetryChart() {
-  const el = document.getElementById("telemetry-stream-chart");
-  if (!el || typeof Plotly === "undefined") return;
-  Plotly.react("telemetry-stream-chart", [{
-    x: telemetryHistory.timestamps, y: telemetryHistory.latency,
-    type: "scatter", mode: "lines", line: { color: "#1B4B43", width: 2, shape: "spline" },
-    fill: "tozeroy", fillcolor: "rgba(27, 75, 67, 0.08)",
-  }], {
-    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
-    margin: { t: 5, r: 10, b: 20, l: 35 }, showlegend: false,
-    xaxis: { showgrid: false, zeroline: false, tickfont: { color: "#94a3b8", size: 9 } },
-    yaxis: { showgrid: true, gridcolor: "#f1f5f9", tickfont: { color: "#94a3b8", size: 9 } },
-  }, { responsive: true, displayModeBar: false });
+  const chartEl = document.getElementById("telemetry-stream-chart");
+  if (!chartEl || typeof Plotly === "undefined") return;
+  Plotly.react(
+    "telemetry-stream-chart",
+    [
+      {
+        x: telemetryHistory.timestamps,
+        y: telemetryHistory.latency,
+        type: "scatter",
+        mode: "lines",
+        line: { color: "#1B4B43", width: 2, shape: "spline" },
+        fill: "tozeroy",
+        fillcolor: "rgba(27, 75, 67, 0.08)",
+      },
+    ],
+    {
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      margin: { t: 5, r: 10, b: 20, l: 35 },
+      showlegend: false,
+      xaxis: { showgrid: false, zeroline: false, tickfont: { color: "#94a3b8", size: 9 } },
+      yaxis: { showgrid: true, gridcolor: "#f1f5f9", tickfont: { color: "#94a3b8", size: 9 } },
+    },
+    { responsive: true, displayModeBar: false }
+  );
 }
 
 async function refreshData() {
@@ -196,12 +230,8 @@ async function refreshData() {
     ]);
 
     const memberBranchById = new Map((membersData.items || []).map((m) => [m.id, m.branch_id]));
-    const filteredMembers = (membersData.items || []).filter(
-      (m) => matchesBranch(m.branch_id) && matchesDate(m.date_joined)
-    );
-    const filteredLoans = (loansData || []).filter(
-      (l) => matchesBranch(memberBranchById.get(l.member_id)) && matchesDate(l.created_at)
-    );
+    const filteredMembers = (membersData.items || []).filter((m) => matchesBranch(m.branch_id) && matchesDate(m.date_joined));
+    const filteredLoans = (loansData || []).filter((l) => matchesBranch(memberBranchById.get(l.member_id)) && matchesDate(l.created_at));
 
     // Real metrics only
     const totalMembership = filteredMembers.length;
@@ -214,7 +244,8 @@ async function refreshData() {
 
     let totalSavings = 0;
     tbData.forEach((tb) => {
-      if (tb.account_name.toLowerCase().includes("deposit") || tb.account_name.toLowerCase().includes("saving")) {
+      const nameLower = (tb.account_name || "").toLowerCase();
+      if (nameLower.includes("deposit") || nameLower.includes("saving")) {
         totalSavings += Number(tb.credit) - Number(tb.debit);
       }
     });
@@ -229,7 +260,8 @@ async function refreshData() {
     const nplRatio = Number(parData?.portfolio_at_risk_pct || 0);
     const overdueOutstanding = Number(parData?.overdue_outstanding || 0);
 
-    let cashCode = null, mmCode = null;
+    let cashCode = null,
+      mmCode = null;
     if (glSettings && accounts.length) {
       const cashAcc = accounts.find((a) => a.id === glSettings.cash_account_id);
       const mmAcc = accounts.find((a) => a.id === glSettings.mobile_money_account_id);
@@ -238,7 +270,7 @@ async function refreshData() {
     }
     let totalLiquidity = 0;
     tbData.forEach((tb) => {
-      const nameLower = tb.account_name.toLowerCase();
+      const nameLower = (tb.account_name || "").toLowerCase();
       if (tb.account_code === cashCode || tb.account_code === mmCode || nameLower.includes("cash") || nameLower.includes("mobile money") || nameLower.includes("bank")) {
         totalLiquidity += Number(tb.debit) - Number(tb.credit);
       }
@@ -250,20 +282,41 @@ async function refreshData() {
 
     mount(kpiGrid, [
       StatCard({ label: "Total Members", value: totalMembership.toLocaleString(), sub: `${activeMembership} active · ${newThisMonth} new this month`, tone: "pine", icon: "users", onClick: () => goTo("/members") }),
-      StatCard({ label: "Total Deposits", value: `UGX ${formatMoney(totalSavings).split(".")[0]}`, sub: "Savings & fixed deposits", tone: "brass", icon: "wallet", sparkData: [totalSavings * 0.92, totalSavings * 0.95, totalSavings * 0.97, totalSavings * 0.99, totalSavings], onClick: () => goTo("/savings") }),
-      StatCard({ label: "Loan Portfolio", value: `UGX ${formatMoney(loanPortfolio).split(".")[0]}`, sub: "Outstanding principal", tone: "pine", icon: "hand-coins", sparkData, onClick: () => goTo("/loans") }),
-      StatCard({ label: "Portfolio at Risk", value: `${nplRatio.toFixed(2)}%`, sub: parData ? `Overdue: UGX ${formatMoney(overdueOutstanding).split(".")[0]}` : "Risk report access required", tone: nplRatio > 5 ? "danger" : "success", icon: "shield-alert", onClick: () => goTo("/risk") }),
-      StatCard({ label: "Liquidity", value: `UGX ${formatMoney(totalLiquidity).split(".")[0]}`, sub: glSettings ? "Cash + bank equivalents" : "Configure GL Settings", tone: "brass", icon: "droplet", onClick: () => goTo("/accounting") }),
+      StatCard({ label: "Total Deposits", value: fmtUGX(totalSavings), sub: "Savings & fixed deposits", tone: "brass", icon: "wallet", sparkData: [totalSavings * 0.92, totalSavings * 0.95, totalSavings * 0.97, totalSavings * 0.99, totalSavings], onClick: () => goTo("/savings") }),
+      StatCard({ label: "Loan Portfolio", value: fmtUGX(loanPortfolio), sub: "Outstanding principal", tone: "pine", icon: "hand-coins", sparkData, onClick: () => goTo("/loans") }),
+      StatCard({ label: "Portfolio at Risk", value: `${nplRatio.toFixed(2)}%`, sub: parData ? `Overdue: ${fmtUGX(overdueOutstanding)}` : "Risk report access required", tone: nplRatio > 5 ? "danger" : "success", icon: "shield-alert", onClick: () => goTo("/risk") }),
+      StatCard({ label: "Liquidity", value: fmtUGX(totalLiquidity), sub: glSettings ? "Cash + bank equivalents" : "Configure GL Settings", tone: "brass", icon: "droplet", onClick: () => goTo("/accounting") }),
     ]);
     refreshIcons(kpiGrid);
 
-    await renderCharts(chartsGrid);
+    await renderCharts(chartsGrid, filteredLoans);
     renderAging(agingCard, filteredLoans);
     renderApprovalsQueue(approvalsCard, filteredLoans, filteredMembers, flagsData);
     renderActivityFeed(activityCard, auditLogs);
   } catch (err) {
     console.error("Dashboard error:", err);
+    showToast("Some dashboard data failed to load. Showing what we have.", "error");
+    renderLoadError(kpiGrid, chartsGrid, agingCard, approvalsCard, activityCard);
   }
+}
+
+function renderLoadError(kpiGrid, chartsGrid, agingCard, approvalsCard, activityCard) {
+  const retry = () => refreshData();
+  const errorCard = (title) =>
+    el("div", { class: "card", style: "display:flex; flex-direction:column; align-items:flex-start; gap:8px;" }, [
+      el("div", { style: "font-weight:600; color: var(--danger, #B3261E);" }, title),
+      el("p", { class: "muted small" }, "Couldn't refresh this section. Check your connection and try again."),
+      el("button", { class: "btn btn-secondary btn-sm", onclick: retry }, "Retry"),
+    ]);
+
+  if (kpiGrid && !kpiGrid.querySelector(".stat-card")) mount(kpiGrid, [errorCard("Unable to load key metrics")]);
+  if (chartsGrid && !chartsGrid.querySelector(".chart-card")) mount(chartsGrid, [errorCard("Unable to load charts")]);
+  [agingCard, approvalsCard, activityCard].forEach((card) => {
+    if (card && card.querySelector(".spinner")) {
+      const title = card.querySelector("h3")?.textContent || "Unable to load";
+      mount(card, [el("h3", {}, title), el("div", { class: "table-empty" }, "Data unavailable — try refreshing the page.")]);
+    }
+  });
 }
 
 function matchesBranch(branchId) {
@@ -276,110 +329,160 @@ function matchesDate(dateStr) {
   const now = new Date();
   if (filterState.dateRange === "daily") return itemDate.toDateString() === now.toDateString();
   if (filterState.dateRange === "weekly") {
-    const oneWeekAgo = new Date(); oneWeekAgo.setDate(now.getDate() - 7);
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(now.getDate() - 7);
     return itemDate >= oneWeekAgo;
   }
   if (filterState.dateRange === "monthly") {
-    const oneMonthAgo = new Date(); oneMonthAgo.setMonth(now.getMonth() - 1);
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(now.getMonth() - 1);
     return itemDate >= oneMonthAgo;
   }
   if (filterState.dateRange === "ytd") return itemDate.getFullYear() === now.getFullYear();
   return true;
 }
 
-async function renderCharts(root) {
+async function renderCharts(root, filteredLoans) {
   mount(root, [
-    el("div", { class: "chart-card" }, [
-      el("h3", {}, "Savings vs. Withdrawals (last 7 months)"),
-      el("div", { class: "chart-wrap", id: "chart-savings-trends" }),
-    ]),
-    el("div", { class: "chart-card" }, [
-      el("h3", {}, "Loan Disbursements vs. Repayments"),
-      el("div", { class: "chart-wrap", id: "chart-loans-trends" }),
-    ]),
-    el("div", { class: "chart-card" }, [
-      el("h3", {}, "Product Volume Distribution"),
-      el("div", { class: "chart-wrap", id: "chart-product-dist" }),
-    ]),
-    el("div", { class: "chart-card" }, [
-      el("h3", {}, "Loan Portfolio Status"),
-      el("div", { class: "chart-wrap", id: "chart-loan-status" }),
-    ]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Savings vs. Withdrawals (last 7 months)"), el("div", { class: "chart-wrap", id: "chart-savings-trends" })]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Loan Disbursements vs. Repayments"), el("div", { class: "chart-wrap", id: "chart-loans-trends" })]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Product Volume Distribution"), el("div", { class: "chart-wrap", id: "chart-product-dist" })]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Loan Portfolio Status"), el("div", { class: "chart-wrap", id: "chart-loan-status" })]),
   ]);
-  const layout = {
-    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
-    font: { family: "Inter, sans-serif", color: "#4B554F" },
-    margin: { t: 20, r: 15, b: 40, l: 60 }, autosize: true,
+
+  const showUnavailable = (id, message) => {
+    const target = document.getElementById(id);
+    if (target) target.innerHTML = `<p class="muted small">${message}</p>`;
   };
-  const config = { responsive: true, displayModeBar: false };
-  let trends;
-  try {
-    trends = await api.get("/api/v1/reports/dashboard-trends?months=7");
-  } catch {
-    document.getElementById("chart-savings-trends").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
-    document.getElementById("chart-loans-trends").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
-    document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
-    document.getElementById("chart-loan-status").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
+
+  if (typeof Plotly === "undefined") {
+    ["chart-savings-trends", "chart-loans-trends", "chart-product-dist", "chart-loan-status"].forEach((id) => showUnavailable(id, "Chart library unavailable."));
+    renderLoanStatusChart(filteredLoans);
     return;
   }
+
+  const layout = {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    font: { family: "Inter, sans-serif", color: "#4B554F" },
+    margin: { t: 20, r: 15, b: 40, l: 60 },
+    autosize: true,
+  };
+  const config = { responsive: true, displayModeBar: false };
+
+  let trends;
+  try {
+    const params = new URLSearchParams({ months: "7", range: filterState.dateRange, branch: filterState.branch });
+    trends = await api.get(`/api/v1/reports/dashboard-trends?${params.toString()}`);
+  } catch {
+    showUnavailable("chart-savings-trends", "Trend data unavailable.");
+    showUnavailable("chart-loans-trends", "Trend data unavailable.");
+    showUnavailable("chart-product-dist", "Trend data unavailable.");
+    renderLoanStatusChart(filteredLoans);
+    return;
+  }
+
   const months = trends.monthly_savings.map((m) => m.month);
   const deposits = trends.monthly_savings.map((m) => Number(m.deposits));
   const withdrawals = trends.monthly_savings.map((m) => Number(m.withdrawals));
 
-  Plotly.newPlot("chart-savings-trends", [
-    { x: months, y: deposits, type: "scatter", mode: "lines+markers", name: "Deposits", line: { color: "#1B4B43", width: 3 }, marker: { size: 6 } },
-    { x: months, y: withdrawals, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } },
-  ], { ...layout, xaxis: { title: "" }, yaxis: { title: "UGX" } }, config);
+  Plotly.newPlot(
+    "chart-savings-trends",
+    [
+      { x: months, y: deposits, type: "scatter", mode: "lines+markers", name: "Deposits", line: { color: "#1B4B43", width: 3 }, marker: { size: 6 } },
+      { x: months, y: withdrawals, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } },
+    ],
+    { ...layout, xaxis: { title: "" }, yaxis: { title: "UGX" } },
+    config
+  );
 
   const disbs = trends.monthly_loans.map((m) => Number(m.disbursed));
   const repays = trends.monthly_loans.map((m) => Number(m.repaid));
-  Plotly.newPlot("chart-loans-trends", [
-    { x: months, y: disbs, type: "bar", name: "Disbursements", marker: { color: "#23685C" } },
-    { x: months, y: repays, type: "bar", name: "Repayments", marker: { color: "#C89B3C" } },
-  ], { ...layout, barmode: "group", xaxis: { title: "" }, yaxis: { title: "UGX" } }, config);
+  Plotly.newPlot(
+    "chart-loans-trends",
+    [
+      { x: months, y: disbs, type: "bar", name: "Disbursements", marker: { color: "#23685C" } },
+      { x: months, y: repays, type: "bar", name: "Repayments", marker: { color: "#C89B3C" } },
+    ],
+    { ...layout, barmode: "group", xaxis: { title: "" }, yaxis: { title: "UGX" } },
+    config
+  );
 
   if (!trends.product_distribution.length) {
-    document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>No active savings balances yet.</p>";
+    showUnavailable("chart-product-dist", "No active savings balances yet.");
   } else {
-    Plotly.newPlot("chart-product-dist", [{
-      labels: trends.product_distribution.map((p) => p.product),
-      values: trends.product_distribution.map((p) => Number(p.balance)),
-      type: "pie", hole: 0.5,
-      marker: { colors: ["#1B4B43", "#23685C", "#C89B3C", "#7C8880", "#8A5A00", "#B3261E"] },
-      textinfo: "percent", textposition: "inside",
-    }], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: "h", y: -0.1 } }, config);
+    Plotly.newPlot(
+      "chart-product-dist",
+      [
+        {
+          labels: trends.product_distribution.map((p) => p.product),
+          values: trends.product_distribution.map((p) => Number(p.balance)),
+          type: "pie",
+          hole: 0.5,
+          marker: { colors: ["#1B4B43", "#23685C", "#C89B3C", "#7C8880", "#8A5A00", "#B3261E"] },
+          textinfo: "percent",
+          textposition: "inside",
+        },
+      ],
+      { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: "h", y: -0.1 } },
+      config
+    );
   }
 
-  // Build loan status breakdown from current data
-  try {
-    const loans = await api.get("/api/v1/loans/applications").catch(() => []);
-    const statusCount = {};
-    loans.forEach((l) => { const s = (l.status || "unknown").toLowerCase(); statusCount[s] = (statusCount[s] || 0) + 1; });
-    const labels = Object.keys(statusCount);
-    const values = labels.map((l) => statusCount[l]);
-    if (labels.length === 0) {
-      document.getElementById("chart-loan-status").innerHTML = "<p class='muted small'>No loan applications yet.</p>";
-    } else {
-      Plotly.newPlot("chart-loan-status", [{
+  renderLoanStatusChart(filteredLoans);
+}
+
+// Builds the loan status donut from the loans already fetched (and filtered)
+// in refreshData, instead of re-fetching every loan application from scratch.
+function renderLoanStatusChart(filteredLoans) {
+  const target = document.getElementById("chart-loan-status");
+  if (!target) return;
+
+  const statusCount = {};
+  (filteredLoans || []).forEach((l) => {
+    const s = (l.status || "unknown").toLowerCase();
+    statusCount[s] = (statusCount[s] || 0) + 1;
+  });
+  const labels = Object.keys(statusCount);
+
+  if (labels.length === 0) {
+    target.innerHTML = "<p class='muted small'>No loan applications yet.</p>";
+    return;
+  }
+  if (typeof Plotly === "undefined") {
+    target.innerHTML = "<p class='muted small'>Chart library unavailable.</p>";
+    return;
+  }
+
+  const values = labels.map((l) => statusCount[l]);
+  Plotly.newPlot(
+    "chart-loan-status",
+    [
+      {
         labels: labels.map((l) => l.replace(/_/g, " ")),
-        values, type: "pie", hole: 0.6,
+        values,
+        type: "pie",
+        hole: 0.6,
         marker: { colors: ["#1B4B43", "#C89B3C", "#8A5A00", "#B3261E", "#23685C", "#7C8880"] },
         textinfo: "label+percent",
-      }], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: false }, config);
-    }
-  } catch {
-    document.getElementById("chart-loan-status").innerHTML = "<p class='muted small'>Status breakdown unavailable.</p>";
-  }
+      },
+    ],
+    {
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      font: { family: "Inter, sans-serif", color: "#4B554F" },
+      margin: { t: 10, r: 10, b: 10, l: 10 },
+      showlegend: false,
+    },
+    { responsive: true, displayModeBar: false }
+  );
 }
 
 function renderAging(cardEl, loans) {
   const active = loans.filter((l) => ["active", "disbursed", "defaulted"].includes(l.status));
   const { buckets, totalOutstanding } = loanAgingBuckets(active);
 
-  mount(cardEl, [
-    el("h3", {}, "Loan Aging"),
-    el("p", { class: "muted small" }, `${active.length} active loan(s), total UGX ${formatMoney(totalOutstanding).split(".")[0]}`),
-  ]);
+  mount(cardEl, [el("h3", {}, "Loan Aging"), el("p", { class: "muted small" }, `${active.length} active loan(s), total ${fmtUGX(totalOutstanding)}`)]);
 
   if (active.length === 0) {
     cardEl.appendChild(el("div", { class: "table-empty" }, "No active loans to analyze."));
@@ -409,15 +512,24 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
   ]);
 
   const queue = [];
-  loans.filter((l) => ["pending", "under_review"].includes(l.status)).forEach((l) => {
-    queue.push({ icon: "file-text", title: `Loan ${l.loan_number}`, desc: `UGX ${formatMoney(l.amount_requested).split(".")[0]} · ${l.repayment_months} mo`, tone: "warn" });
-  });
-  members.filter((m) => ["dormant", "suspended"].includes(m.status)).slice(0, 3).forEach((m) => {
-    queue.push({ icon: "user-check", title: `${m.first_name} ${m.last_name}`, desc: `KYC: ${m.status}`, tone: "info" });
-  });
-  flags.filter((f) => f.status === "open").slice(0, 3).forEach((f) => {
-    queue.push({ icon: "shield-alert", title: (f.flag_type || "Flag").replace(/_/g, " "), desc: (f.description || "").slice(0, 50), tone: "danger" });
-  });
+  loans
+    .filter((l) => ["pending", "under_review"].includes(l.status))
+    .forEach((l) => {
+      const months = l.repayment_months != null ? `${l.repayment_months} mo` : "term TBD";
+      queue.push({ icon: "file-text", title: `Loan ${l.loan_number}`, desc: `${fmtUGX(l.amount_requested)} · ${months}`, tone: "warn" });
+    });
+  members
+    .filter((m) => ["dormant", "suspended"].includes(m.status))
+    .slice(0, 3)
+    .forEach((m) => {
+      queue.push({ icon: "user-check", title: `${m.first_name} ${m.last_name}`, desc: `KYC: ${m.status}`, tone: "info" });
+    });
+  flags
+    .filter((f) => (f.status || "open") === "open")
+    .slice(0, 3)
+    .forEach((f) => {
+      queue.push({ icon: "shield-alert", title: (f.flag_type || "Flag").replace(/_/g, " "), desc: (f.description || "").slice(0, 50), tone: "danger" });
+    });
 
   if (!queue.length) {
     cardEl.appendChild(el("div", { class: "table-empty" }, "Queue clear. Nothing needs your review."));
@@ -426,10 +538,7 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
   queue.slice(0, 6).forEach((q) => {
     const item = el("div", { class: "queue-item" }, [
       el("div", { class: "icon" }, [el("i", { "data-lucide": q.icon })]),
-      el("div", { class: "body" }, [
-        el("div", { class: "title" }, q.title),
-        el("div", { class: "desc" }, q.desc),
-      ]),
+      el("div", { class: "body" }, [el("div", { class: "title" }, q.title), el("div", { class: "desc" }, q.desc)]),
     ]);
     cardEl.appendChild(item);
   });
@@ -437,26 +546,21 @@ function renderApprovalsQueue(cardEl, loans, members, flags) {
 }
 
 function renderActivityFeed(cardEl, logs) {
-  mount(cardEl, [
-    el("h3", {}, "Recent Activity"),
-    el("p", { class: "muted small" }, "Latest actions across the system."),
-  ]);
+  mount(cardEl, [el("h3", {}, "Recent Activity"), el("p", { class: "muted small" }, "Latest actions across the system.")]);
 
-  const recent = logs.slice(0, 6);
+  const recent = (logs || []).slice(0, 6);
   if (!recent.length) {
     cardEl.appendChild(el("div", { class: "table-empty" }, "No activity recorded."));
     return;
   }
   const list = el("ul", { class: "timeline" });
   recent.forEach((log) => {
+    const what = `${log.action}${log.entity_type ? ` ${log.entity_type}` : ""}`;
     const item = el("li", { class: "timeline-item" }, [
       el("div", { class: "timeline-dot" }, [el("i", { "data-lucide": "activity" })]),
       el("div", { class: "timeline-content" }, [
-        el("div", { class: "head" }, [
-          el("span", { class: "who" }, log.actor_name || "System"),
-          el("span", { class: "when" }, formatDateTime(log.created_at)),
-        ]),
-        el("div", { class: "what" }, `${log.action} ${log.entity_type || ""}`),
+        el("div", { class: "head" }, [el("span", { class: "who" }, log.actor_name || "System"), el("span", { class: "when" }, formatDateTime(log.created_at))]),
+        el("div", { class: "what" }, what),
       ]),
     ]);
     list.appendChild(item);
