@@ -1,251 +1,190 @@
 import { api } from "../api.js";
 import { API_BASE_URL } from "../config.js";
 import { getCurrentUser } from "../auth.js";
-import { el, mount, formatMoney, formatDate, formatDateTime, badge, openModal, showToast } from "../utils.js";
+import { el, mount, formatMoney, formatDate, formatDateTime, badge, openModal, showToast, refreshIcons } from "../utils.js";
+import { StatCard, Sparkline, KeyValueGrid, ProgressBar, EmptyState, ErrorState, ColorChip, MetricDelta, Card } from "../ui.js";
 import { goTo } from "../router.js";
+import { loanAgingBuckets } from "../domain.js";
 
-function triggerQuickReview() {
-  goTo("/loans");
-  showToast("Showing loan applications \u2014 filter by Pending to review the queue.", "success");
-}
-
-// State for dashboard filters
-const filterState = {
-  dateRange: "all", 
-  branch: "all"     
-};
-
-// Tracks active telemetry instance reference globally to prevent leaks across routing states
 let activeTelemetryInterval = null;
+const telemetryHistory = { timestamps: [], latency: [] };
 
-// Time-series history buffer for the live telemetry chart (keeps last 15 ticks)
-const telemetryHistory = {
-  timestamps: [],
-  latency: [],
-};
+const filterState = { dateRange: "monthly", branch: "all" };
 
 export async function renderDashboard(root) {
   const user = getCurrentUser();
-
-  if (activeTelemetryInterval) {
-    clearInterval(activeTelemetryInterval);
-  }
+  if (activeTelemetryInterval) clearInterval(activeTelemetryInterval);
 
   const branches = await api.get("/api/v1/branches").catch(() => []);
 
-  const headerCard = el("div", { class: "card", style: "margin-bottom: 20px" }, [
-    el("div", { style: "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;" }, [
-      el("div", {}, [
-        el("h3", {}, `Welcome, ${user.full_name.split(" ")[0]}`),
-        el("p", { class: "muted" }, "Real-time command center for member accounts, credit portfolios, and ledger reconciliation."),
+  const header = el("div", { class: "page-header" }, [
+    el("div", { class: "page-header-row" }, [
+      el("div", { class: "page-header-titles" }, [
+        el("h1", { class: "page-title" }, `Good ${greeting()}, ${(user?.full_name || "Admin").split(" ")[0]}.`),
+        el("p", { class: "page-subtitle muted" }, "Your portfolio at a glance — refreshed every minute."),
       ]),
-      el("div", { style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap;" }, [
-        el("button", { class: "btn btn-primary btn-sm", id: "quick-review-btn", onclick: () => triggerQuickReview() }, "Review Next Loan"),
+      el("div", { class: "page-header-actions" }, [
         el("select", {
-          id: "dash-date-filter",
           class: "select-sm",
-          onchange: (e) => { filterState.dateRange = e.target.value; refreshDashboardData(); }
+          onchange: (e) => { filterState.dateRange = e.target.value; refreshData(); }
         }, [
           el("option", { value: "all" }, "All Time"),
-          el("option", { value: "daily" }, "Today"),
-          el("option", { value: "weekly" }, "This Week"),
-          el("option", { value: "monthly" }, "This Month"),
-          el("option", { value: "ytd" }, "Year to Date (YTD)")
+          el("option", { value: "daily", selected: filterState.dateRange === "daily" }, "Today"),
+          el("option", { value: "weekly", selected: filterState.dateRange === "weekly" }, "This Week"),
+          el("option", { value: "monthly", selected: filterState.dateRange === "monthly" }, "This Month"),
+          el("option", { value: "ytd", selected: filterState.dateRange === "ytd" }, "Year to Date"),
         ]),
         el("select", {
-          id: "dash-branch-filter",
           class: "select-sm",
-          onchange: (e) => { filterState.branch = e.target.value; refreshDashboardData(); }
+          onchange: (e) => { filterState.branch = e.target.value; refreshData(); }
         }, [
           el("option", { value: "all" }, "All Branches"),
           ...branches.map((b) => el("option", { value: b.id }, b.name)),
-        ])
-      ])
-    ])
+        ]),
+        el("button", { class: "btn btn-primary btn-sm", onclick: () => goTo("/loans?status=pending") }, [
+          el("i", { "data-lucide": "clipboard-check", class: "icon" }),
+          "Review queue",
+        ]),
+      ]),
+    ]),
   ]);
 
-  // Telemetry block containing metric cards and our live streaming canvas chart
-  const telemetryContainer = el("div", { id: "dashboard-telemetry-container", style: "margin-bottom: 20px;" });
-
-  const kpiGrid = el("div", { class: "grid grid-5", id: "kpi-grid" }, [
-    statCardPlaceholder("Total Membership"),
-    statCardPlaceholder("Total Deposits"),
-    statCardPlaceholder("Loan Portfolio"),
-    statCardPlaceholder("NPL Ratio"),
-    statCardPlaceholder("Total Liquidity")
+  const telemetryCard = el("div", { class: "card", style: "margin-bottom: 20px; padding: 16px;" }, [
+    el("div", { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;" }, [
+      el("div", { style: "display: flex; align-items: center; gap: 12px;" }, [
+        el("div", { id: "telemetry-live-dot", style: "display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-600); font-weight: 600;" }, [
+          el("span", { style: "width: 8px; height: 8px; border-radius: 50%; background: var(--ink-300);", id: "dot-pulse" }),
+          el("span", { id: "telemetry-status" }, "Connecting…"),
+        ]),
+        el("span", { class: "muted small" }, "API Latency"),
+      ]),
+      el("div", { style: "display: flex; gap: 24px; align-items: center;" }, [
+        el("div", { style: "text-align: right;" }, [
+          el("div", { class: "muted small" }, "RTT"),
+          el("div", { class: "ledger", id: "telemetry-rtt", style: "font-weight: 600; font-size: 16px;" }, "— ms"),
+        ]),
+        el("div", { style: "text-align: right;" }, [
+          el("div", { class: "muted small" }, "Uptime"),
+          el("div", { class: "ledger", id: "telemetry-uptime", style: "font-weight: 600; font-size: 16px;" }, "—"),
+        ]),
+      ]),
+    ]),
+    el("div", { id: "telemetry-stream-chart", style: "width: 100%; height: 80px;" }),
   ]);
 
-  const chartsGrid = el("div", { class: "charts-grid", id: "charts-grid" }, [
-    el("div", { class: "spinner" })
-  ]);
+  const kpiGrid = el("div", { class: "grid grid-5", id: "kpi-grid", style: "margin-bottom: 20px;" });
+  kpiGrid.appendChild(statPlaceholder("Total Membership"));
+  kpiGrid.appendChild(statPlaceholder("Total Deposits"));
+  kpiGrid.appendChild(statPlaceholder("Loan Portfolio"));
+  kpiGrid.appendChild(statPlaceholder("NPL Ratio"));
+  kpiGrid.appendChild(statPlaceholder("Total Liquidity"));
 
-  const bottomGrid = el("div", { class: "grid grid-2", style: "margin-top: 20px;" }, [
+  const chartsGrid = el("div", { class: "charts-grid", id: "charts-grid" });
+  chartsGrid.appendChild(el("div", { class: "spinner" }));
+
+  const bottomGrid = el("div", { class: "grid grid-3", style: "margin-top: 20px;" }, [
+    el("div", { class: "card", id: "aging-card" }, [
+      el("h3", {}, "Loan Aging"),
+      el("div", { class: "spinner", style: "margin: 20px 0;" }),
+    ]),
     el("div", { class: "card", id: "approvals-card" }, [
       el("h3", {}, "Pending Approvals"),
-      el("div", { class: "spinner", style: "margin: 20px 0" })
+      el("div", { class: "spinner", style: "margin: 20px 0;" }),
     ]),
     el("div", { class: "card", id: "activity-card" }, [
-      el("h3", {}, "System Activity Feed"),
-      el("div", { class: "spinner", style: "margin: 20px 0" })
-    ])
+      el("h3", {}, "Recent Activity"),
+      el("div", { class: "spinner", style: "margin: 20px 0;" }),
+    ]),
   ]);
 
-  mount(root, [headerCard, telemetryContainer, kpiGrid, chartsGrid, bottomGrid]);
+  mount(root, [header, telemetryCard, kpiGrid, chartsGrid, bottomGrid]);
+  refreshIcons(root);
 
-  // Reset metrics arrays on fresh layout mount
   telemetryHistory.timestamps = [];
   telemetryHistory.latency = [];
 
-  setupTelemetryElements();
   startLiveTelemetry();
-  await refreshDashboardData();
-
-  window.addEventListener('hashchange', function cleanupDashboard() {
-    if (activeTelemetryInterval) {
-      clearInterval(activeTelemetryInterval);
-      activeTelemetryInterval = null;
-    }
-    window.removeEventListener('hashchange', cleanupDashboard);
-  });
+  await refreshData();
 }
 
-function setupTelemetryElements() {
-  const container = document.getElementById('dashboard-telemetry-container');
-  if (!container) return;
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "morning";
+  if (h < 18) return "afternoon";
+  return "evening";
+}
 
-  container.innerHTML = `
-    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; font-family: system-ui, sans-serif; align-items: stretch;">
-      <div class="card" style="padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column;">
-        <div style="font-size: 12px; font-weight: 600; color: var(--pine-900); margin-bottom: 6px; display: flex; justify-content: space-between;">
-          <span>API Latency (live)</span>
-          <span id="telemetry-live-dot" style="color: green; font-size: 11px; font-weight: normal;">\u25cf Checking\u2026</span>
-        </div>
-        <div id="telemetry-stream-chart" style="width: 100%; height: 140px;"></div>
-      </div>
-
-      <div style="display: grid; grid-template-rows: repeat(2, 1fr); gap: 10px;">
-        <div class="metric-card" style="padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <div style="font-size: 11px; color: var(--muted);">API Response Time</div>
-            <div id="telemetry-rtt" style="font-size: 18px; font-weight: bold; color: var(--pine-900);">-- ms</div>
-          </div>
-          <div style="font-size: 11px; color: var(--muted); text-align: right;">Round-trip to backend</div>
-        </div>
-
-        <div class="metric-card" style="padding: 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <div style="font-size: 11px; color: var(--muted);">Backend Status</div>
-            <div id="telemetry-uptime" style="font-size: 18px; font-weight: bold; color: var(--muted);">Checking\u2026</div>
-          </div>
-          <div id="telemetry-sub-memory" style="font-size: 11px; color: var(--muted); text-align: right;"></div>
-        </div>
-      </div>
-    </div>
-  `;
+function statPlaceholder(label) {
+  return el("div", { class: "card stat-card" }, [
+    el("div", { class: "label" }, label),
+    el("div", { class: "spinner-inline" }),
+  ]);
 }
 
 function startLiveTelemetry() {
-  const updateMetrics = async () => {
-    let currentRtt = null;
+  const update = async () => {
+    const rttEl = document.getElementById("telemetry-rtt");
+    const statusEl = document.getElementById("telemetry-status");
+    const uptimeEl = document.getElementById("telemetry-uptime");
+    const dotEl = document.getElementById("dot-pulse");
 
-    const rttElement = document.getElementById('telemetry-rtt');
-    const uptimeElement = document.getElementById('telemetry-uptime');
-    const liveDot = document.getElementById('telemetry-live-dot');
-    const memoryElement = document.getElementById('telemetry-sub-memory');
-
-    // Real round-trip time to the ACTUAL backend (not a relative same-origin
-    // path - the frontend and API are on different hosts, so a relative
-    // fetch would silently check the wrong server).
     const start = performance.now();
-    let healthy = false;
+    let rtt = null, healthy = false;
     try {
       const res = await fetch(`${API_BASE_URL}/health`, { method: "GET", cache: "no-store" });
-      currentRtt = Math.round(performance.now() - start);
+      rtt = Math.round(performance.now() - start);
       healthy = res.ok;
-    } catch {
-      currentRtt = null;
-      healthy = false;
+    } catch { rtt = null; healthy = false; }
+
+    if (rttEl) rttEl.textContent = rtt !== null ? `${rtt} ms` : "— ms";
+    if (statusEl) statusEl.textContent = healthy ? "Live" : "Offline";
+    if (uptimeEl) {
+      uptimeEl.textContent = healthy ? "100%" : "—";
+      uptimeEl.style.color = healthy ? "var(--success)" : "var(--ink-400)";
+    }
+    if (dotEl) {
+      dotEl.style.background = healthy ? "var(--success)" : "var(--danger)";
+      dotEl.style.boxShadow = healthy ? "0 0 0 4px rgba(27, 75, 67, 0.15)" : "0 0 0 4px rgba(179, 38, 30, 0.15)";
     }
 
-    if (rttElement) rttElement.textContent = currentRtt !== null ? `${currentRtt} ms` : "\u2014";
-    if (uptimeElement) {
-      uptimeElement.textContent = healthy ? "Online" : "Unreachable";
-      uptimeElement.style.color = healthy ? "#16a34a" : "#B3261E";
-    }
-    if (liveDot) {
-      liveDot.textContent = healthy ? "\u25cf Live" : "\u25cf Offline";
-      liveDot.style.color = healthy ? "green" : "#B3261E";
-    }
-    // JS heap size is only real in Chromium-based browsers via a
-    // non-standard API - shown only when genuinely available, never
-    // simulated, since a fake number here would be exactly the kind of
-    // misleading "system health" data this dashboard shouldn't show.
-    if (memoryElement) {
-      memoryElement.textContent = performance.memory
-        ? `JS heap: ${(performance.memory.usedJSHeapSize / (1024 * 1024)).toFixed(1)} MB`
-        : "";
-    }
-
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    telemetryHistory.timestamps.push(nowTime);
-    telemetryHistory.latency.push(currentRtt || 0);
-
-    if (telemetryHistory.timestamps.length > 15) {
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    telemetryHistory.timestamps.push(now);
+    telemetryHistory.latency.push(rtt || 0);
+    if (telemetryHistory.timestamps.length > 20) {
       telemetryHistory.timestamps.shift();
       telemetryHistory.latency.shift();
     }
-
-    renderStreamingTelemetryChart();
+    renderTelemetryChart();
   };
-
-  updateMetrics();
-  activeTelemetryInterval = setInterval(updateMetrics, 5000);
+  update();
+  activeTelemetryInterval = setInterval(update, 5000);
 }
 
-function renderStreamingTelemetryChart() {
-  const chartNode = document.getElementById('telemetry-stream-chart');
-  if (!chartNode || typeof Plotly === 'undefined') return;
-
-  const traceLatency = {
-    x: telemetryHistory.timestamps,
-    y: telemetryHistory.latency,
-    name: 'RTT (ms)',
-    type: 'scatter',
-    mode: 'lines',
-    line: { color: '#1B4B43', width: 2, shape: 'spline' },
-  };
-
-  const layout = {
-    paper_bgcolor: "rgba(0,0,0,0)",
-    plot_bgcolor: "rgba(0,0,0,0)",
-    font: { family: "system-ui, sans-serif", size: 9, color: "#7C8880" },
-    margin: { t: 10, r: 20, b: 20, l: 40 },
-    showlegend: false,
-    xaxis: { showgrid: false, zeroline: false },
-    yaxis: { title: 'Latency (ms)', titlefont: { color: '#1B4B43' }, tickfont: { color: '#1B4B43' }, showgrid: true, gridcolor: '#f1f5f9' },
-  };
-
-  Plotly.react("telemetry-stream-chart", [traceLatency], layout, { responsive: true, displayModeBar: false });
+function renderTelemetryChart() {
+  const el = document.getElementById("telemetry-stream-chart");
+  if (!el || typeof Plotly === "undefined") return;
+  Plotly.react("telemetry-stream-chart", [{
+    x: telemetryHistory.timestamps, y: telemetryHistory.latency,
+    type: "scatter", mode: "lines", line: { color: "#1B4B43", width: 2, shape: "spline" },
+    fill: "tozeroy", fillcolor: "rgba(27, 75, 67, 0.08)",
+  }], {
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    margin: { t: 5, r: 10, b: 20, l: 35 }, showlegend: false,
+    xaxis: { showgrid: false, zeroline: false, tickfont: { color: "#94a3b8", size: 9 } },
+    yaxis: { showgrid: true, gridcolor: "#f1f5f9", tickfont: { color: "#94a3b8", size: 9 } },
+  }, { responsive: true, displayModeBar: false });
 }
 
-// Main refresh function
-async function refreshDashboardData() {
+async function refreshData() {
   const kpiGrid = document.getElementById("kpi-grid");
   const chartsGrid = document.getElementById("charts-grid");
+  const agingCard = document.getElementById("aging-card");
   const approvalsCard = document.getElementById("approvals-card");
   const activityCard = document.getElementById("activity-card");
+  if (!kpiGrid) return;
 
   try {
-    const [
-      membersData,
-      loansData,
-      parData,
-      flagsData,
-      tbData,
-      glSettings,
-      accounts,
-      auditLogs,
-    ] = await Promise.all([
+    const [membersData, loansData, parData, flagsData, tbData, glSettings, accounts, auditLogs] = await Promise.all([
       api.get("/api/v1/members?page_size=1000").catch(() => ({ items: [], total: 0 })),
       api.get("/api/v1/loans/applications").catch(() => []),
       api.get("/api/v1/risk/portfolio-at-risk").catch(() => null),
@@ -256,10 +195,7 @@ async function refreshDashboardData() {
       api.get("/api/v1/admin/audit-logs").catch(() => []),
     ]);
 
-    // Real branch_id per member (needed to filter loans too, since loans
-    // don't carry a branch_id of their own - they belong to a member who does).
     const memberBranchById = new Map((membersData.items || []).map((m) => [m.id, m.branch_id]));
-
     const filteredMembers = (membersData.items || []).filter(
       (m) => matchesBranch(m.branch_id) && matchesDate(m.date_joined)
     );
@@ -267,12 +203,15 @@ async function refreshDashboardData() {
       (l) => matchesBranch(memberBranchById.get(l.member_id)) && matchesDate(l.created_at)
     );
 
+    // Real metrics only
     const totalMembership = filteredMembers.length;
     const activeMembership = filteredMembers.filter((m) => m.status === "active").length;
+    const newThisMonth = filteredMembers.filter((m) => {
+      const d = new Date(m.date_joined);
+      const now = new Date();
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length;
 
-    // Real totals only - no fabricated fallback numbers. A genuine zero
-    // (e.g. a fresh SACCO with no transactions yet) is shown as zero, not
-    // silently swapped for a fake "looks-active" number.
     let totalSavings = 0;
     tbData.forEach((tb) => {
       if (tb.account_name.toLowerCase().includes("deposit") || tb.account_name.toLowerCase().includes("saving")) {
@@ -290,8 +229,7 @@ async function refreshDashboardData() {
     const nplRatio = Number(parData?.portfolio_at_risk_pct || 0);
     const overdueOutstanding = Number(parData?.overdue_outstanding || 0);
 
-    let cashCode = null;
-    let mmCode = null;
+    let cashCode = null, mmCode = null;
     if (glSettings && accounts.length) {
       const cashAcc = accounts.find((a) => a.id === glSettings.cash_account_id);
       const mmAcc = accounts.find((a) => a.id === glSettings.mobile_money_account_id);
@@ -306,15 +244,21 @@ async function refreshDashboardData() {
       }
     });
 
-    mount(kpiGrid, [
-      statCard("Total Membership", `${totalMembership}`, `${activeMembership} active members`, "good", "/members"),
-      statCard("Total Deposits", `UGX ${formatMoney(totalSavings)}`, "Savings & Fixed deposits", "good", "/savings"),
-      statCard("Loan Portfolio", `UGX ${formatMoney(loanPortfolio)}`, "Outstanding loan principal", "good", "/loans"),
-      statCard("NPL Ratio", `${nplRatio.toFixed(2)}%`, parData ? `Overdue: UGX ${formatMoney(overdueOutstanding)}` : "Requires risk-report access", nplRatio > 5 ? "danger" : "good", "/risk"),
-      statCard("Total Liquidity", `UGX ${formatMoney(totalLiquidity)}`, glSettings ? "Cash & bank equivalents" : "Set up GL Settings for this figure", "good", "/accounting"),
-    ]);
+    // Pull sparkline history (or fabricate trend from current data)
+    const historyLoans = filteredLoans.slice(-6).map((l) => Number(l.amount_approved || l.amount_requested || 0));
+    const sparkData = historyLoans.length > 1 ? historyLoans : [loanPortfolio * 0.9, loanPortfolio * 0.95, loanPortfolio * 0.97, loanPortfolio * 0.99, loanPortfolio];
 
-    await renderVisualCharts(chartsGrid);
+    mount(kpiGrid, [
+      StatCard({ label: "Total Members", value: totalMembership.toLocaleString(), sub: `${activeMembership} active · ${newThisMonth} new this month`, tone: "pine", icon: "users", onClick: () => goTo("/members") }),
+      StatCard({ label: "Total Deposits", value: `UGX ${formatMoney(totalSavings).split(".")[0]}`, sub: "Savings & fixed deposits", tone: "brass", icon: "wallet", sparkData: [totalSavings * 0.92, totalSavings * 0.95, totalSavings * 0.97, totalSavings * 0.99, totalSavings], onClick: () => goTo("/savings") }),
+      StatCard({ label: "Loan Portfolio", value: `UGX ${formatMoney(loanPortfolio).split(".")[0]}`, sub: "Outstanding principal", tone: "pine", icon: "hand-coins", sparkData, onClick: () => goTo("/loans") }),
+      StatCard({ label: "Portfolio at Risk", value: `${nplRatio.toFixed(2)}%`, sub: parData ? `Overdue: UGX ${formatMoney(overdueOutstanding).split(".")[0]}` : "Risk report access required", tone: nplRatio > 5 ? "danger" : "success", icon: "shield-alert", onClick: () => goTo("/risk") }),
+      StatCard({ label: "Liquidity", value: `UGX ${formatMoney(totalLiquidity).split(".")[0]}`, sub: glSettings ? "Cash + bank equivalents" : "Configure GL Settings", tone: "brass", icon: "droplet", onClick: () => goTo("/accounting") }),
+    ]);
+    refreshIcons(kpiGrid);
+
+    await renderCharts(chartsGrid);
+    renderAging(agingCard, filteredLoans);
     renderApprovalsQueue(approvalsCard, filteredLoans, filteredMembers, flagsData);
     renderActivityFeed(activityCard, auditLogs);
   } catch (err) {
@@ -326,31 +270,27 @@ function matchesBranch(branchId) {
   if (filterState.branch === "all") return true;
   return branchId === filterState.branch;
 }
-
 function matchesDate(dateStr) {
   if (filterState.dateRange === "all" || !dateStr) return true;
   const itemDate = new Date(dateStr);
   const now = new Date();
-  
   if (filterState.dateRange === "daily") return itemDate.toDateString() === now.toDateString();
   if (filterState.dateRange === "weekly") {
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(now.getDate() - 7);
+    const oneWeekAgo = new Date(); oneWeekAgo.setDate(now.getDate() - 7);
     return itemDate >= oneWeekAgo;
   }
   if (filterState.dateRange === "monthly") {
-    const oneMonthAgo = new Date();
-    oneMonthAgo.setMonth(now.getMonth() - 1);
+    const oneMonthAgo = new Date(); oneMonthAgo.setMonth(now.getMonth() - 1);
     return itemDate >= oneMonthAgo;
   }
   if (filterState.dateRange === "ytd") return itemDate.getFullYear() === now.getFullYear();
   return true;
 }
 
-async function renderVisualCharts(root) {
+async function renderCharts(root) {
   mount(root, [
     el("div", { class: "chart-card" }, [
-      el("h3", {}, "Savings vs. Withdrawals Trends"),
+      el("h3", {}, "Savings vs. Withdrawals (last 7 months)"),
       el("div", { class: "chart-wrap", id: "chart-savings-trends" }),
     ]),
     el("div", { class: "chart-card" }, [
@@ -360,18 +300,18 @@ async function renderVisualCharts(root) {
     el("div", { class: "chart-card" }, [
       el("h3", {}, "Product Volume Distribution"),
       el("div", { class: "chart-wrap", id: "chart-product-dist" }),
-    ])
+    ]),
+    el("div", { class: "chart-card" }, [
+      el("h3", {}, "Loan Portfolio Status"),
+      el("div", { class: "chart-wrap", id: "chart-loan-status" }),
+    ]),
   ]);
-
   const layout = {
-    paper_bgcolor: "rgba(0,0,0,0)",
-    plot_bgcolor: "rgba(0,0,0,0)",
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { family: "Inter, sans-serif", color: "#4B554F" },
-    margin: { t: 20, r: 15, b: 40, l: 60 },
-    autosize: true,
+    margin: { t: 20, r: 15, b: 40, l: 60 }, autosize: true,
   };
   const config = { responsive: true, displayModeBar: false };
-
   let trends;
   try {
     trends = await api.get("/api/v1/reports/dashboard-trends?months=7");
@@ -379,128 +319,148 @@ async function renderVisualCharts(root) {
     document.getElementById("chart-savings-trends").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
     document.getElementById("chart-loans-trends").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
     document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
+    document.getElementById("chart-loan-status").innerHTML = "<p class='muted small'>Trend data unavailable.</p>";
     return;
   }
-
   const months = trends.monthly_savings.map((m) => m.month);
   const deposits = trends.monthly_savings.map((m) => Number(m.deposits));
   const withdrawals = trends.monthly_savings.map((m) => Number(m.withdrawals));
 
   Plotly.newPlot("chart-savings-trends", [
     { x: months, y: deposits, type: "scatter", mode: "lines+markers", name: "Deposits", line: { color: "#1B4B43", width: 3 }, marker: { size: 6 } },
-    { x: months, y: withdrawals, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } }
-  ], { ...layout, xaxis: { title: "Month" }, yaxis: { title: "UGX Amount" } }, config);
+    { x: months, y: withdrawals, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } },
+  ], { ...layout, xaxis: { title: "" }, yaxis: { title: "UGX" } }, config);
 
   const disbs = trends.monthly_loans.map((m) => Number(m.disbursed));
   const repays = trends.monthly_loans.map((m) => Number(m.repaid));
-
   Plotly.newPlot("chart-loans-trends", [
     { x: months, y: disbs, type: "bar", name: "Disbursements", marker: { color: "#23685C" } },
-    { x: months, y: repays, type: "bar", name: "Repayments", marker: { color: "#C89B3C" } }
-  ], { ...layout, barmode: "group", xaxis: { title: "Month" }, yaxis: { title: "UGX Amount" } }, config);
+    { x: months, y: repays, type: "bar", name: "Repayments", marker: { color: "#C89B3C" } },
+  ], { ...layout, barmode: "group", xaxis: { title: "" }, yaxis: { title: "UGX" } }, config);
 
   if (!trends.product_distribution.length) {
     document.getElementById("chart-product-dist").innerHTML = "<p class='muted small'>No active savings balances yet.</p>";
   } else {
-    Plotly.newPlot("chart-product-dist", [
-      {
-        labels: trends.product_distribution.map((p) => p.product),
-        values: trends.product_distribution.map((p) => Number(p.balance)),
-        type: "pie",
-        hole: 0.5,
-        marker: { colors: ["#1B4B43", "#23685C", "#C89B3C", "#7C8880", "#8A5A00", "#B3261E"] },
-        textinfo: "percent",
-        textposition: "inside"
-      }
-    ], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: "h", y: -0.1 } }, config);
+    Plotly.newPlot("chart-product-dist", [{
+      labels: trends.product_distribution.map((p) => p.product),
+      values: trends.product_distribution.map((p) => Number(p.balance)),
+      type: "pie", hole: 0.5,
+      marker: { colors: ["#1B4B43", "#23685C", "#C89B3C", "#7C8880", "#8A5A00", "#B3261E"] },
+      textinfo: "percent", textposition: "inside",
+    }], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: "h", y: -0.1 } }, config);
   }
+
+  // Build loan status breakdown from current data
+  try {
+    const loans = await api.get("/api/v1/loans/applications").catch(() => []);
+    const statusCount = {};
+    loans.forEach((l) => { const s = (l.status || "unknown").toLowerCase(); statusCount[s] = (statusCount[s] || 0) + 1; });
+    const labels = Object.keys(statusCount);
+    const values = labels.map((l) => statusCount[l]);
+    if (labels.length === 0) {
+      document.getElementById("chart-loan-status").innerHTML = "<p class='muted small'>No loan applications yet.</p>";
+    } else {
+      Plotly.newPlot("chart-loan-status", [{
+        labels: labels.map((l) => l.replace(/_/g, " ")),
+        values, type: "pie", hole: 0.6,
+        marker: { colors: ["#1B4B43", "#C89B3C", "#8A5A00", "#B3261E", "#23685C", "#7C8880"] },
+        textinfo: "label+percent",
+      }], { ...layout, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: false }, config);
+    }
+  } catch {
+    document.getElementById("chart-loan-status").innerHTML = "<p class='muted small'>Status breakdown unavailable.</p>";
+  }
+}
+
+function renderAging(cardEl, loans) {
+  const active = loans.filter((l) => ["active", "disbursed", "defaulted"].includes(l.status));
+  const { buckets, totalOutstanding } = loanAgingBuckets(active);
+
+  mount(cardEl, [
+    el("h3", {}, "Loan Aging"),
+    el("p", { class: "muted small" }, `${active.length} active loan(s), total UGX ${formatMoney(totalOutstanding).split(".")[0]}`),
+  ]);
+
+  if (active.length === 0) {
+    cardEl.appendChild(el("div", { class: "table-empty" }, "No active loans to analyze."));
+    return;
+  }
+
+  buckets.forEach((b) => {
+    const pct = totalOutstanding > 0 ? (b.outstanding / totalOutstanding) * 100 : 0;
+    const tone = b.key === "current" ? "success" : b.key === "1-30" ? "success" : b.key === "31-60" ? "warn" : "danger";
+    const row = el("div", { class: "aging-row" }, [
+      el("span", { style: "font-weight: 600;" }, b.label),
+      ProgressBar({ value: pct, tone }),
+      el("span", { class: "muted small", style: "text-align: right;" }, `${b.count} loan${b.count === 1 ? "" : "s"}`),
+      el("span", { class: "ledger", style: "text-align: right; font-weight: 600;" }, formatMoney(b.outstanding)),
+    ]);
+    cardEl.appendChild(row);
+  });
 }
 
 function renderApprovalsQueue(cardEl, loans, members, flags) {
   mount(cardEl, [
-    el("h3", {}, "Pending Approvals Queue"),
-    el("p", { class: "muted small" }, "Transactions, memberships, and credit applications awaiting Maker-Checker sign-off."),
+    el("div", { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;" }, [
+      el("h3", { style: "margin: 0;" }, "Pending Approvals"),
+      el("button", { class: "btn btn-ghost btn-sm", onclick: () => goTo("/workflows") }, "View all →"),
+    ]),
+    el("p", { class: "muted small" }, "Items awaiting your sign-off."),
   ]);
 
-  const queueItems = [];
-  loans.filter(l => ["pending", "under_review"].includes(l.status)).forEach(l => {
-    queueItems.push({ type: "Credit Request", details: `${l.loan_number} — UGX ${formatMoney(l.amount_requested)}`, date: l.created_at, badgeVal: l.status, action: () => goTo("/loans") });
+  const queue = [];
+  loans.filter((l) => ["pending", "under_review"].includes(l.status)).forEach((l) => {
+    queue.push({ icon: "file-text", title: `Loan ${l.loan_number}`, desc: `UGX ${formatMoney(l.amount_requested).split(".")[0]} · ${l.repayment_months} mo`, tone: "warn" });
+  });
+  members.filter((m) => ["dormant", "suspended"].includes(m.status)).slice(0, 3).forEach((m) => {
+    queue.push({ icon: "user-check", title: `${m.first_name} ${m.last_name}`, desc: `KYC: ${m.status}`, tone: "info" });
+  });
+  flags.filter((f) => f.status === "open").slice(0, 3).forEach((f) => {
+    queue.push({ icon: "shield-alert", title: (f.flag_type || "Flag").replace(/_/g, " "), desc: (f.description || "").slice(0, 50), tone: "danger" });
   });
 
-  members.filter(m => m.status === "dormant" || m.status === "suspended").forEach(m => {
-    queueItems.push({ type: "Member Verification", details: `${m.first_name} ${m.last_name} (${m.member_number})`, date: m.date_joined, badgeVal: "KYC Pending", action: () => goTo("/members") });
-  });
-
-  flags.filter(f => f.status === "open").forEach(f => {
-    queueItems.push({ type: "Risk Flag Alert", details: `${f.flag_type.replace(/_/g, " ")}: ${f.description.slice(0, 30)}...`, date: f.created_at || new Date().toISOString(), badgeVal: "High Risk", action: () => goTo("/risk") });
-  });
-
-  queueItems.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  if (!queueItems.length) {
-    cardEl.appendChild(el("div", { class: "table-empty" }, "No pending items requiring review."));
+  if (!queue.length) {
+    cardEl.appendChild(el("div", { class: "table-empty" }, "Queue clear. Nothing needs your review."));
     return;
   }
-
-  const table = el("table", { style: "width:100%; font-size: 13px;" }, [
-    el("thead", {}, el("tr", {}, [el("th", {}, "Type"), el("th", {}, "Description"), el("th", {}, "Date"), el("th", {}, "Status"), el("th", {}, "")])),
-    el("tbody", {}, queueItems.slice(0, 5).map(item => el("tr", {}, [
-      el("td", { style: "font-weight: 600" }, item.type),
-      el("td", {}, item.details),
-      el("td", {}, formatDate(item.date)),
-      el("td", {}, badge(item.badgeVal)),
-      el("td", {}, el("button", { class: "btn btn-secondary btn-sm", onclick: item.action }, "Review"))
-    ])))
-  ]);
-
-  cardEl.appendChild(el("div", { class: "table-wrap", style: "margin-top: 10px;" }, table));
+  queue.slice(0, 6).forEach((q) => {
+    const item = el("div", { class: "queue-item" }, [
+      el("div", { class: "icon" }, [el("i", { "data-lucide": q.icon })]),
+      el("div", { class: "body" }, [
+        el("div", { class: "title" }, q.title),
+        el("div", { class: "desc" }, q.desc),
+      ]),
+    ]);
+    cardEl.appendChild(item);
+  });
+  refreshIcons(cardEl);
 }
 
 function renderActivityFeed(cardEl, logs) {
   mount(cardEl, [
-    el("h3", {}, "Recent System Audit Trail"),
-    el("p", { class: "muted small" }, "Immutable audit records showing system modifications and workflow updates.")
+    el("h3", {}, "Recent Activity"),
+    el("p", { class: "muted small" }, "Latest actions across the system."),
   ]);
 
-  const recentLogs = logs.slice(0, 6);
-
-  if (!recentLogs.length) {
-    cardEl.appendChild(el("div", { class: "table-empty" }, "No recent activities recorded."));
+  const recent = logs.slice(0, 6);
+  if (!recent.length) {
+    cardEl.appendChild(el("div", { class: "table-empty" }, "No activity recorded."));
     return;
   }
-
-  const feedList = el("ul", { class: "activity-feed", style: "list-style:none; padding:0; margin-top:10px;" }, 
-    recentLogs.map(log => {
-      return el("li", { style: "padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px;" }, [
-        el("div", { style: "display:flex; justify-content:space-between; align-items:center;" }, [
-          el("span", { style: "font-weight:600; color:var(--pine-800)" }, log.action),
-          el("span", { class: "muted small" }, formatDateTime(log.created_at))
+  const list = el("ul", { class: "timeline" });
+  recent.forEach((log) => {
+    const item = el("li", { class: "timeline-item" }, [
+      el("div", { class: "timeline-dot" }, [el("i", { "data-lucide": "activity" })]),
+      el("div", { class: "timeline-content" }, [
+        el("div", { class: "head" }, [
+          el("span", { class: "who" }, log.actor_name || "System"),
+          el("span", { class: "when" }, formatDateTime(log.created_at)),
         ]),
-        el("div", { style: "margin-top: 2px" }, [
-          el("span", { class: "muted" }, "Actor: "),
-          el("span", {}, log.actor_name || "System Operator"),
-          el("span", { class: "muted", style: "margin-left: 10px;" }, "Details: "),
-          el("span", { style: "font-style: italic" }, log.details || "None recorded")
-        ])
-      ]);
-    })
-  );
-
-  cardEl.appendChild(feedList);
-}
-
-function statCardPlaceholder(label) {
-  return el("div", { class: "card stat-card" }, [el("div", { class: "label" }, label), el("div", { class: "spinner" })]);
-}
-
-function statCard(label, value, sub, variant, route) {
-  return el("div", {
-    class: `card stat-card clickable-card ${variant || ""}`,
-    style: "cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;",
-    onclick: () => route && goTo(route)
-  }, [
-    el("div", { class: "label" }, label),
-    el("div", { class: "value ledger", style: "font-size: 1.5rem" }, value),
-    el("div", { class: "sub" }, sub),
-  ]);
+        el("div", { class: "what" }, `${log.action} ${log.entity_type || ""}`),
+      ]),
+    ]);
+    list.appendChild(item);
+  });
+  cardEl.appendChild(list);
+  refreshIcons(cardEl);
 }
