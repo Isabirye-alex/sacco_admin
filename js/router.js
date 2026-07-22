@@ -1,19 +1,20 @@
 import { isAuthenticated } from "./auth.js";
-import { el, mount, showToast } from "./utils.js";
+import { el, mount, showToast, refreshIcons } from "./utils.js";
 
-const routes = {}; // path -> { title, render(root) }
+const routes = {}; // path -> { title, render(root, query) }
 
 export function registerRoute(path, title, render) {
   routes[path] = { title, render };
 }
 
 function parseHash() {
-  const hash = window.location.hash.replace(/^#/, "") || "/dashboard";
-  return hash.split("?")[0];
+  const raw = window.location.hash.replace(/^#/, "") || "/dashboard";
+  const [path, query = ""] = raw.split("?");
+  return { path: path || "/dashboard", query: new URLSearchParams(query) };
 }
 
 async function renderRoute() {
-  const path = parseHash();
+  const { path, query } = parseHash();
   const authed = isAuthenticated();
 
   const loginScreen = document.getElementById("login-screen");
@@ -40,7 +41,8 @@ async function renderRoute() {
   mount(root, el("div", { class: "spinner" }));
 
   try {
-    await match.render(root);
+    await match.render(root, query);
+    refreshIcons(root);
   } catch (err) {
     console.error(err);
     mount(
@@ -54,6 +56,8 @@ async function renderRoute() {
   }
 
   document.querySelector(".sidebar")?.classList.remove("open");
+  // Scroll to top on route change
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 export function startRouter() {
