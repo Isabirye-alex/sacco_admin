@@ -1,6 +1,7 @@
 import { api } from "../api.js";
 import { el, mount, formatDate, formatMoney, showToast, dataTable, badge } from "../utils.js";
 import { goTo, refreshCurrentRoute } from "../router.js";
+import { exportToCsv, exportToJson } from "../ui.js";
 
 // Schedulers list saved in localStorage
 let schedules = JSON.parse(localStorage.getItem("sacco_report_schedules") || "[]");
@@ -332,7 +333,36 @@ async function buildComplianceReportPanel() {
 
 // 4. Direct Trigger Export download
 function triggerExport(rep, format) {
-  showToast(`${format.toUpperCase()} export isn't built yet - use "Compile & Display" to view this report for now.`, "error");
+  const preview = document.getElementById("compiled-output-preview");
+  const table = preview?.querySelector(".table-wrap table");
+  if (!table) {
+    showToast("Generate and display the report first, then click export.", "error");
+    return;
+  }
+
+  const headers = Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent.trim());
+  const rows = Array.from(table.querySelectorAll("tbody tr")).map((tr) =>
+    Array.from(tr.querySelectorAll("td")).map((td) => td.textContent.trim())
+  );
+
+  const baseName = `${rep.key}-${new Date().toISOString().slice(0, 10)}`;
+
+  if (format === "csv") {
+    exportToCsv(`${baseName}.csv`, headers, rows);
+  } else if (format === "json") {
+    const objects = rows.map((r) => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = r[i]; });
+      return obj;
+    });
+    exportToJson(`${baseName}.json`, objects);
+  } else {
+    showToast(`${format.toUpperCase()} export uses JSON fallback.`, "info");
+    const fallback = rows.length
+      ? headers.reduce((o, h, i) => (o[h] = rows.map((r) => r[i]), o), {})
+      : [];
+    exportToJson(`${baseName}.json`, fallback);
+  }
 }
 
 // 5. Automated Schedulers List

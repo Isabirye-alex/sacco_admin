@@ -3,6 +3,14 @@ export function formatMoney(value) {
   return n.toLocaleString("en-UG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+export function formatMoneyCompact(value) {
+  const n = Number(value ?? 0);
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toFixed(0);
+}
+
 export function formatDate(value) {
   if (!value) return "—";
   const d = new Date(value);
@@ -67,6 +75,7 @@ export function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
     if (key === "class") node.className = value;
+    else if (key === "style" && typeof value === "object") Object.assign(node.style, value);
     else if (key === "html") node.innerHTML = value;
     else if (key.startsWith("on") && typeof value === "function") {
       const eventName = key.slice(2).toLowerCase();
@@ -100,9 +109,10 @@ export function el(tag, attrs = {}, children = []) {
 
 export function statusBadgeClass(status) {
   const s = String(status || "").toLowerCase();
-  if (["active", "approved", "disbursed", "closed", "accepted", "sent", "reconciled"].includes(s)) return "badge badge-success";
-  if (["pending", "under_review", "queued", "draft"].includes(s)) return "badge badge-warn";
-  if (["rejected", "defaulted", "declined", "failed", "exception", "suspended", "exited"].includes(s)) return "badge badge-danger";
+  if (["active", "approved", "disbursed", "closed", "accepted", "sent", "reconciled", "success", "resolved", "submitted"].includes(s)) return "badge badge-success";
+  if (["pending", "under_review", "queued", "draft", "invited", "open"].includes(s)) return "badge badge-warn";
+  if (["rejected", "defaulted", "declined", "failed", "exception", "suspended", "exited", "escalated"].includes(s)) return "badge badge-danger";
+  if (["registered", "info"].includes(s)) return "badge badge-info";
   return "badge badge-neutral";
 }
 
@@ -110,11 +120,30 @@ export function badge(status) {
   return el("span", { class: statusBadgeClass(status) }, titleCase(status));
 }
 
-export function showToast(message, type = "default") {
+/**
+ * Refresh Lucide icons in a node (and any newly mounted subtrees).
+ * Lucide is loaded as a global `lucide` via the UMD CDN.
+ */
+export function refreshIcons(scope = document) {
+  if (typeof window !== "undefined" && window.lucide && window.lucide.createIcons) {
+    try { window.lucide.createIcons(); } catch {}
+  }
+}
+
+export function showToast(message, type = "default", duration = 4200) {
   const root = document.getElementById("toast-root");
-  const toast = el("div", { class: `toast ${type === "error" ? "error" : type === "success" ? "success" : ""}` }, message);
+  if (!root) return;
+  const iconMap = { success: "check-circle", error: "alert-circle", info: "info" };
+  const toast = el("div", { class: `toast ${type === "error" ? "error" : type === "success" ? "success" : type === "info" ? "info" : ""}` });
+  if (iconMap[type]) toast.appendChild(el("i", { "data-lucide": iconMap[type] }));
+  toast.appendChild(el("span", {}, message));
   root.appendChild(toast);
-  setTimeout(() => toast.remove(), 4200);
+  refreshIcons(toast);
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(-6px)";
+    setTimeout(() => toast.remove(), 200);
+  }, duration);
 }
 
 export function clearNode(node) {
@@ -131,16 +160,24 @@ export function mount(rootNode, children) {
  * Renders a modal dialog. `buildBody(closeFn)` returns an array of child
  * nodes for the modal body; call closeFn() to dismiss programmatically.
  */
-export function openModal(title, buildBody) {
+export function openModal(title, buildBody, { size } = {}) {
   const backdrop = el("div", { class: "modal-backdrop" });
   const close = () => backdrop.remove();
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) close();
   });
+  document.addEventListener("keydown", function escHandler(e) {
+    if (e.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", escHandler);
+    }
+  });
 
-  const modal = el("div", { class: "modal" }, [el("h3", {}, title), ...buildBody(close)]);
+  const sizeClass = size === "lg" ? " modal-lg" : size === "xl" ? " modal-xl" : "";
+  const modal = el("div", { class: `modal${sizeClass}` }, [el("h3", {}, title), ...buildBody(close)]);
   backdrop.appendChild(modal);
   document.body.appendChild(backdrop);
+  refreshIcons(modal);
   return close;
 }
 
@@ -161,12 +198,12 @@ export function createUserNameResolver(apiGet) {
       const users = await apiGet("/api/v1/admin/users");
       cache = new Map(users.map((u) => [u.id, u.full_name]));
     } catch {
-      cache = null; // not an admin, or request failed - fall back silently
+      cache = null;
     }
   }
 
   return async function resolve(userId) {
-    if (!userId) return "\u2014";
+    if (!userId) return "—";
     await ensureLoaded();
     if (cache && cache.has(userId)) return cache.get(userId);
     return `User #${userId.slice(0, 8)}`;
@@ -174,9 +211,9 @@ export function createUserNameResolver(apiGet) {
 }
 
 /** Simple yes/no confirmation modal. Returns a Promise<boolean>. */
-export function confirmDialog(message, confirmLabel = "Confirm", danger = true) {
+export function confirmDialog(message, confirmLabel = "Confirm", danger = true, title = "Please confirm") {
   return new Promise((resolve) => {
-    openModal("Please confirm", (close) => [
+    openModal(title, (close) => [
       el("p", { class: "muted" }, message),
       el("div", { class: "modal-actions" }, [
         el("button", { class: "btn btn-secondary", onclick: () => { close(); resolve(false); } }, "Cancel"),
@@ -191,7 +228,7 @@ export function confirmDialog(message, confirmLabel = "Confirm", danger = true) 
 
 /**
  * Renders a table from column definitions and row data.
- * columns: [{ header, render(row) -> string|Node, className? }]
+ * columns: [{ header, render(row) -> string|Node, className?, sortValue? }]
  */
 export function dataTable(columns, rows, emptyMessage = "No records found.") {
   if (!rows.length) {
@@ -199,7 +236,7 @@ export function dataTable(columns, rows, emptyMessage = "No records found.") {
   }
   return el("div", { class: "table-wrap" }, [
     el("table", {}, [
-      el("thead", {}, el("tr", {}, columns.map((c) => el("th", {}, c.header)))),
+      el("thead", {}, el("tr", {}, columns.map((c) => el("th", { class: c.sortValue ? "sortable" : "" }, c.header)))),
       el(
         "tbody",
         {},
@@ -218,6 +255,101 @@ export function dataTable(columns, rows, emptyMessage = "No records found.") {
 }
 
 /**
+ * Sortable, paginated data table with column sorting.
+ * columns: [{ header, render(row) -> string|Node, className?, sortValue?(row) -> any }]
+ */
+export function sortableTable({ columns, rows, emptyMessage = "No records found.", pageSize = 25, initialSort = null }) {
+  const state = { sortKey: initialSort, sortDir: 1, page: 1 };
+  const wrap = el("div", {});
+
+  function applySort(items) {
+    if (!state.sortKey) return items;
+    const col = columns.find((c) => c.sortValue);
+    if (!col) return items;
+    const key = columns.indexOf(col);
+    return [...items].sort((a, b) => {
+      const va = col.sortValue(a);
+      const vb = col.sortValue(b);
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * state.sortDir;
+      return String(va).localeCompare(String(vb)) * state.sortDir;
+    });
+  }
+
+  function renderHeader() {
+    return el("tr", {}, columns.map((c, i) => {
+      const indicator = state.sortKey === i ? (state.sortDir === 1 ? "▲" : "▼") : (c.sortValue ? "⇅" : "");
+      return el("th", {
+        class: c.sortValue ? "sortable" : "",
+        onclick: () => {
+          if (!c.sortValue) return;
+          if (state.sortKey === i) state.sortDir *= -1;
+          else { state.sortKey = i; state.sortDir = 1; }
+          render();
+        }
+      }, [c.header, indicator ? el("span", { class: "sort-indicator" }, indicator) : null].filter(Boolean));
+    }));
+  }
+
+  function renderBody(items) {
+    return items.map((row) =>
+      el("tr", {}, columns.map((c) => {
+        const value = c.render(row);
+        return el("td", { class: c.className || "" }, typeof value === "string" || typeof value === "number" ? value : value || "");
+      }))
+    );
+  }
+
+  function render() {
+    const sorted = applySort(rows);
+    const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+    if (state.page > totalPages) state.page = totalPages;
+    const start = (state.page - 1) * pageSize;
+    const pageRows = sorted.slice(start, start + pageSize);
+
+    const body = el("tbody", {}, pageRows.length
+      ? renderBody(pageRows)
+      : [el("tr", {}, el("td", { colspan: String(columns.length) }, emptyMessage))]
+    );
+
+    const pageInfo = el("span", { class: "muted" },
+      sorted.length === 0
+        ? "0 records"
+        : `Showing ${start + 1}–${Math.min(start + pageSize, sorted.length)} of ${sorted.length}`
+    );
+
+    const pageNums = el("div", { class: "page-numbers" });
+    for (let p = 1; p <= totalPages; p++) {
+      if (totalPages > 7 && p > 2 && p < totalPages - 1 && Math.abs(p - state.page) > 1) {
+        if (p === 3 || p === totalPages - 2) pageNums.appendChild(el("span", { class: "page-num" }, "…"));
+        continue;
+      }
+      pageNums.appendChild(el("button", {
+        class: `page-num ${p === state.page ? "active" : ""}`,
+        onclick: () => { state.page = p; render(); }
+      }, String(p)));
+    }
+
+    const pagination = el("div", { class: "pagination" }, [
+      pageInfo,
+      el("div", { class: "controls" }, [
+        el("button", { class: "btn btn-secondary btn-sm", disabled: state.page <= 1, onclick: () => { state.page--; render(); } }, "Previous"),
+        pageNums,
+        el("button", { class: "btn btn-secondary btn-sm", disabled: state.page >= totalPages, onclick: () => { state.page++; render(); } }, "Next"),
+      ]),
+    ]);
+
+    mount(wrap, [
+      el("div", { class: "table-wrap" }, [el("table", {}, [el("thead", {}, renderHeader()), body])]),
+      sorted.length > pageSize ? pagination : null,
+    ].filter(Boolean));
+  }
+  render();
+  return wrap;
+}
+
+/**
  * Pagination bar. onChange(nextPage) is called when the user navigates.
  */
 export function paginationBar(page, pageSize, total, onChange) {
@@ -226,7 +358,7 @@ export function paginationBar(page, pageSize, total, onChange) {
   const to = Math.min(total, page * pageSize);
 
   return el("div", { class: "pagination" }, [
-    el("span", { class: "muted" }, `${from}\u2013${to} of ${total}`),
+    el("span", { class: "muted" }, `${from}–${to} of ${total}`),
     el("div", { class: "controls" }, [
       el("button", { class: "btn btn-secondary btn-sm", disabled: page <= 1, onclick: () => onChange(page - 1) }, "Previous"),
       el("span", { class: "muted small", style: "align-self:center" }, `Page ${page} of ${totalPages}`),
@@ -239,7 +371,7 @@ export function paginationBar(page, pageSize, total, onChange) {
  * A search-as-you-type member picker. Calls onSelect(member) once chosen.
  * Returns the container element to mount in a form.
  */
-export function memberPicker(searchFn, onSelect, placeholder = "Search by name, member number, or national ID\u2026") {
+export function memberPicker(searchFn, onSelect, placeholder = "Search by name, member number, or national ID…") {
   let selected = null;
   const container = el("div", {});
   const input = el("input", { type: "text", placeholder });
@@ -274,7 +406,7 @@ export function memberPicker(searchFn, onSelect, placeholder = "Search by name, 
               renderSelected();
               onSelect(m);
             },
-          }, `${m.first_name} ${m.last_name} \u2014 ${m.member_number}`)
+          }, `${m.first_name} ${m.last_name} — ${m.member_number}`)
         )
       );
       resultsBox.appendChild(list);
@@ -298,4 +430,25 @@ export function memberPicker(searchFn, onSelect, placeholder = "Search by name, 
 
   container.getSelected = () => selected;
   return container;
+}
+
+/** Debounce helper */
+export function debounce(fn, ms = 250) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+/** Get initials from a full name */
+export function initials(name) {
+  if (!name) return "??";
+  return String(name)
+    .trim()
+    .split(/\s+/)
+    .map((s) => s[0]?.toUpperCase())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("");
 }

@@ -651,39 +651,3 @@ function debounce(fn, ms) {
     t = setTimeout(() => fn(...args), ms);
   };
 }
-
-
-// js/views/members.js
-export default class MembersView {
-  constructor() {
-    this.container = document.getElementById('main-content');
-  }
-
-  render() {
-    this.parseRouteQuery();
-  }
-
-  parseRouteQuery() {
-    const searchParams = new URLSearchParams(window.location.hash.includes('?') 
-      ? window.location.hash.split('?')[1] 
-      : window.location.search
-    );
-    
-    const searchQuery = searchParams.get('search');
-    
-    if (searchQuery) {
-      this.executeMemberFilter(decodeURIComponent(searchQuery));
-    }
-  }
-
-  executeMemberFilter(query) {
-    const tableSearchInput = document.getElementById('table-filter-input'); 
-    
-    if (tableSearchInput) {
-      tableSearchInput.value = query;
-      tableSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
-    } else {
-      console.log(`Filtering member data source for: ${query}`);
-    }
-  }
-}

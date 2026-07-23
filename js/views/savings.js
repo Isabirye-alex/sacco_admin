@@ -5,6 +5,8 @@ import {
 
 const resolveUserName = createUserNameResolver((path) => api.get(path));
 
+let reconciliationState = null;
+
 let active = "accounts";
 
 export async function renderSavings(root) {
@@ -476,6 +478,7 @@ async function renderReconciliationTab(content, root) {
           const parts = line.split(",").map(p => p.replace(/^"|"$/g, "").trim());
           if (parts.length >= 3) {
             statementRows.push({
+              _rid: i,
               date: parts[0],
               narrative: parts[1],
               amount: Number(parts[2] || 0),
@@ -504,30 +507,13 @@ async function renderReconciliationTab(content, root) {
           }
         });
 
-        // Display results
-        mount(resultHolder, el("div", { class: "card" }, [
-          el("h3", {}, "Automated Matching Report"),
-          el("div", { style: "display: flex; gap: 20px; font-weight: bold; margin-bottom: 15px;" }, [
-            el("span", {}, `Total Matched: UGX ${formatMoney(totalMatchedAmount)} (${matched.length} rows)`),
-            el("span", { style: "color: var(--warn);" }, `Total Variance: UGX ${formatMoney(totalVariance)} (${unmatched.length} unmatched)`),
-          ]),
-          el("h4", {}, "Reconciled Transactions Grid"),
-          dataTable(
-            [
-              { header: "Date", render: (r) => r.date },
-              { header: "Reference / Narrative", render: (r) => r.narrative },
-              { header: "Amount", className: "ledger", render: (r) => `UGX ${formatMoney(r.amount)}` },
-              { header: "Status", render: (r) => matched.includes(r) ? badge("reconciled") : badge("exception") },
-              {
-                header: "",
-                render: (r) => !matched.includes(r) 
-                  ? el("button", { class: "btn btn-secondary btn-sm", onclick: () => forceReconcileRow(r, resultHolder) }, "Resolve Exception")
-                  : ""
-              }
-            ],
-            [...matched, ...unmatched]
-          )
-        ]));
+        reconciliationState = {
+          rows: [...matched, ...unmatched],
+          matchedIds: new Set(matched.map((r) => r._rid)),
+          totalMatchedAmount,
+          totalVariance,
+        };
+        renderReconciliationResult(resultHolder);
         showToast("Reconciliation match run completed.", "success");
       } catch (err) {
         errorEl.textContent = err.message;
@@ -543,6 +529,43 @@ async function renderReconciliationTab(content, root) {
   ]);
 }
 
+function renderReconciliationResult(holder) {
+  if (!reconciliationState) return;
+  const { rows, matchedIds, totalMatchedAmount, totalVariance } = reconciliationState;
+  const unmatchedCount = rows.length - matchedIds.size;
+  mount(holder, el("div", { class: "card" }, [
+    el("h3", {}, "Automated Matching Report"),
+    el("div", { style: "display: flex; gap: 20px; font-weight: bold; margin-bottom: 15px;" }, [
+      el("span", {}, `Total Matched: UGX ${formatMoney(totalMatchedAmount)} (${matchedIds.size} rows)`),
+      el("span", { style: "color: var(--warn);" }, `Total Variance: UGX ${formatMoney(totalVariance)} (${unmatchedCount} unmatched)`),
+    ]),
+    el("h4", {}, "Reconciled Transactions Grid"),
+    dataTable(
+      [
+        { header: "Date", render: (r) => r.date },
+        { header: "Reference / Narrative", render: (r) => r.narrative },
+        { header: "Amount", className: "ledger", render: (r) => `UGX ${formatMoney(r.amount)}` },
+        { header: "Status", render: (r) => matchedIds.has(r._rid) ? badge("reconciled") : badge("exception") },
+        {
+          header: "",
+          render: (r) => !matchedIds.has(r._rid)
+            ? el("button", { class: "btn btn-secondary btn-sm", onclick: () => forceReconcileRow(r, holder) }, "Resolve Exception")
+            : ""
+        }
+      ],
+      rows
+    )
+  ]));
+}
+
 function forceReconcileRow(row, holder) {
-  showToast(`Row ${row.narrative} has been reconciled manually.`, "success");
+  if (!reconciliationState) return;
+  const idx = reconciliationState.rows.findIndex((r) => r._rid === row._rid);
+  if (idx === -1 || reconciliationState.matchedIds.has(row._rid)) return;
+  const rowAmount = Number(row.amount || 0);
+  reconciliationState.matchedIds.add(row._rid);
+  reconciliationState.totalMatchedAmount += rowAmount;
+  reconciliationState.totalVariance = Math.max(0, reconciliationState.totalVariance - rowAmount);
+  renderReconciliationResult(holder);
+  showToast(`Row "${row.narrative}" has been reconciled manually.`, "success");
 }

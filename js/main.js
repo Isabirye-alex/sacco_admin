@@ -1,8 +1,11 @@
 import { login, logout, isAuthenticated, loadCurrentUser, getCurrentUser } from "./auth.js";
 import { registerRoute, startRouter, goTo, refreshCurrentRoute } from "./router.js";
-import { showToast, titleCase, setButtonLoadingState } from "./utils.js";
+import { showToast, titleCase, setButtonLoadingState, el, initials, refreshIcons, debounce } from "./utils.js";
+import { api } from "./api.js";
+import { initCommandPalette } from "./command-palette.js";
 
 import { renderDashboard } from "./views/dashboard.js";
+import { renderWorkflows } from "./views/workflows.js";
 import { renderMembers } from "./views/members.js";
 import { renderSavings } from "./views/savings.js";
 import { renderLoans } from "./views/loans.js";
@@ -16,8 +19,10 @@ import { renderRisk } from "./views/risk.js";
 import { renderUsers } from "./views/users.js";
 import { renderReferrals } from "./views/referrals.js";
 import { renderBranches } from "./views/branches.js";
+import { renderSystem } from "./views/system.js";
 
 registerRoute("/dashboard", "Dashboard", renderDashboard);
+registerRoute("/workflows", "Approvals", renderWorkflows);
 registerRoute("/members", "Members", renderMembers);
 registerRoute("/savings", "Savings", renderSavings);
 registerRoute("/loans", "Credit & Loans", renderLoans);
@@ -28,44 +33,39 @@ registerRoute("/groups", "Group Management", renderGroups);
 registerRoute("/notifications", "Notifications", renderNotifications);
 registerRoute("/reports", "Reports & Analytics", renderReports);
 registerRoute("/risk", "Risk & Compliance", renderRisk);
+registerRoute("/system", "System Health", renderSystem);
 registerRoute("/referrals", "Referrals", renderReferrals);
 registerRoute("/users", "Users & Audit", renderUsers);
 registerRoute("/branches", "Branch Management", renderBranches);
 
 function renderUserChip() {
   const user = getCurrentUser();
-  const chip = document.getElementById("user-chip");
   if (!user) return;
-  chip.innerHTML = "";
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = user.full_name;
-  const role = document.createElement("span");
-  role.className = "role";
-  role.textContent = titleCase(user.role);
-  chip.appendChild(name);
-  chip.appendChild(role);
+  const nameEl = document.getElementById("user-name");
+  const roleEl = document.getElementById("user-role");
+  const avatar = document.getElementById("user-avatar");
+  if (nameEl) nameEl.textContent = user.full_name;
+  if (roleEl) roleEl.textContent = user.role.replace(/_/g, " ");
+  if (avatar) avatar.textContent = initials(user.full_name);
+  refreshIcons(document.querySelector(".sidebar-footer"));
 }
 
 /**
- * Manages global search redirects to the members view
+ * Global search redirects to the members view
  */
 function initGlobalSearch() {
   const searchInput = document.getElementById("global-search");
   if (!searchInput) return;
-
   searchInput.addEventListener("keypress", (e) => {
     if (e.key === "Enter") {
       const query = encodeURIComponent(searchInput.value.trim());
-      if (query) {
-        goTo(`/members?search=${query}`);
-      }
+      if (query) goTo(`/members?search=${query}`);
     }
   });
 }
 
 /**
- * Handles fetching audit/risk logs and syncing the notification bell UI with a live red badge indicator
+ * Polls system notifications and the audit log to power the notification bell.
  */
 function initNotificationSync() {
   const bellBtn = document.getElementById("bell-btn");
@@ -76,102 +76,79 @@ function initNotificationSync() {
 
   if (!bellBtn || !bellDropdown) return;
 
-  // Toggle Dropdown Display
   bellBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     const isHidden = bellDropdown.style.display === "none" || !bellDropdown.style.display;
     bellDropdown.style.display = isHidden ? "block" : "none";
-    
-    // Optional: Clear the visual red dot once user clicks to open the panel
-    const liveDot = document.getElementById("nav-bell-live-dot");
-    if (liveDot) liveDot.remove();
   });
 
-  // Close dropdown when clicking outside
-  document.addEventListener("click", () => {
-    bellDropdown.style.display = "none";
-  });
+  document.addEventListener("click", () => { bellDropdown.style.display = "none"; });
   bellDropdown.addEventListener("click", (e) => e.stopPropagation());
 
-  // Fetch telemetry / audit data
   async function fetchSystemLogs() {
     try {
-      const response = await fetch("/api/logs/system-warnings"); 
-      if (!response.ok) throw new Error("Network response failure.");
-      
-      const logs = await response.json(); 
-      renderNotificationsUI(logs);
-    } catch (error) {
-      console.error("Failed to sync notification telemetry:", error);
+      // Pull open risk flags + open workflow items as a proxy for system-level warnings
+      const [flags, loans] = await Promise.all([
+        api.get("/api/v1/risk/flags?flag_status=open").catch(() => []),
+        api.get("/api/v1/loans/applications?loan_status=pending").catch(() => []),
+      ]);
+      const warnings = [];
+      flags.forEach((f) => {
+        warnings.push({
+          severity: ["ghost_member", "aml_suspicious_deposit"].includes(f.flag_type) ? "CRITICAL" : "WARNING",
+          message: `${(f.flag_type || "").replace(/_/g, " ")}: ${f.description?.slice(0, 80) || "—"}`,
+        });
+      });
+      if (loans.length > 0) {
+        warnings.push({
+          severity: "INFO",
+          message: `${loans.length} loan application${loans.length === 1 ? "" : "s"} awaiting review`,
+        });
+      }
+      renderNotificationsUI(warnings);
+      updateNavBadge(warnings.length);
+    } catch (err) {
+      console.error("Failed to sync notification telemetry:", err);
     }
   }
 
-  function renderNotificationsUI(logs) {
-    const activeAlerts = logs.filter(log => !log.read);
-
-    // Dynamic clean rendering of the live warning red dot node
-    let liveDot = document.getElementById("nav-bell-live-dot");
-
-    if (activeAlerts.length > 0) {
-      // 1. Maintain numeric counter bubble
-      bellBadge.textContent = activeAlerts.length > 99 ? "99+" : activeAlerts.length;
+  function renderNotificationsUI(warnings) {
+    if (warnings.length > 0) {
+      bellBadge.textContent = warnings.length > 99 ? "99+" : String(warnings.length);
       bellBadge.style.display = "block";
-      
-      // 2. Mount / maintain pulsing warning red dot onto container
-      if (!liveDot) {
-        liveDot = document.createElement("span");
-        liveDot.id = "nav-bell-live-dot";
-        Object.assign(liveDot.style, {
-          position: "absolute",
-          top: "4px",
-          right: "4px",
-          width: "10px",
-          height: "10px",
-          backgroundColor: "#dc2626",
-          borderRadius: "50%",
-          border: "2px solid #ffffff",
-          display: "inline-block",
-          pointerEvents: "none"
-        });
-        
-        if (window.getComputedStyle(bellBtn).position === "static") {
-          bellBtn.style.position = "relative";
-        }
-        bellBtn.appendChild(liveDot);
-      }
-
-      bellItems.innerHTML = activeAlerts.map(alert => `
-        <div class="notification-item" style="padding: 8px; margin-bottom: 6px; border-radius: 4px; background: #fdf2f2; border-left: 3px solid #B3261E; font-size: 12px; font-family: system-ui, sans-serif;">
-          <strong style="display: block; color: #B3261E;">${alert.severity || "WARNING"}</strong>
-          <span style="color: #1b4b43;">${alert.message}</span>
+      bellItems.innerHTML = warnings.map((w) => `
+        <div style="padding: 10px 14px; border-bottom: 1px solid var(--line-2); font-size: 13px;">
+          <div style="font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: ${w.severity === "CRITICAL" ? "var(--danger)" : w.severity === "WARNING" ? "var(--warn)" : "var(--info)"};">${w.severity}</div>
+          <div style="color: var(--ink-700); margin-top: 2px;">${w.message}</div>
         </div>
       `).join("");
     } else {
-      // Clean teardown arrays when warnings go down to 0
       bellBadge.style.display = "none";
-      if (liveDot) liveDot.remove();
-      bellItems.innerHTML = `<div class="muted small" style="text-align: center; padding: 20px 0;">No active system warnings.</div>`;
+      bellItems.innerHTML = `<div class="muted small" style="text-align: center; padding: 24px 16px;">No active system warnings.</div>`;
     }
   }
 
-  // Clear/Mark Read Action
+  function updateNavBadge(count) {
+    const wf = document.getElementById("nav-badge-workflows");
+    if (wf) {
+      wf.textContent = count > 99 ? "99+" : String(count);
+      wf.hidden = count === 0;
+    }
+  }
+
   if (clearBtn) {
-    clearBtn.addEventListener("click", async () => {
-      try {
-        await fetch("/api/logs/clear", { method: "POST" });
-        renderNotificationsUI([]);
-      } catch (err) {
-        console.error("Failed to clear notifications:", err);
-      }
+    clearBtn.addEventListener("click", () => {
+      bellBadge.style.display = "none";
+      bellItems.innerHTML = `<div class="muted small" style="text-align: center; padding: 24px 16px;">No active system warnings.</div>`;
     });
   }
 
-  // Initial call and poll interval sync every 30 seconds
   fetchSystemLogs();
   setInterval(fetchSystemLogs, 30000);
 }
 
 async function bootstrap() {
+  initCommandPalette();
   if (isAuthenticated()) {
     try {
       await loadCurrentUser();
@@ -181,10 +158,10 @@ async function bootstrap() {
     }
   }
   startRouter();
-  
-  // Initialize navigation & real-time notification dependencies
   initGlobalSearch();
   initNotificationSync();
+  // Initial icon pass for static UI
+  if (window.lucide) window.lucide.createIcons();
 }
 
 document.getElementById("login-form").addEventListener("submit", async (e) => {
@@ -203,6 +180,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     goTo("/dashboard");
     refreshCurrentRoute();
     showToast(`Welcome back, ${getCurrentUser().full_name.split(" ")[0]}!`, "success");
+    refreshIcons();
   } catch (err) {
     errorEl.textContent = err.message || "Unable to sign in.";
     errorEl.hidden = false;
