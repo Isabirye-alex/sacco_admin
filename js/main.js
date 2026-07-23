@@ -86,6 +86,7 @@ function initNotificationSync() {
   bellDropdown.addEventListener("click", (e) => e.stopPropagation());
 
   async function fetchSystemLogs() {
+    if (!isAuthenticated()) return;
     try {
       // Pull open risk flags + open workflow items as a proxy for system-level warnings
       const [flags, loans] = await Promise.all([

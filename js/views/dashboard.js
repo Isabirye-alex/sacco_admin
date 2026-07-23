@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import { API_BASE_URL } from "../config.js";
-import { getCurrentUser } from "../auth.js";
+import { getCurrentUser, isAuthenticated } from "../auth.js";
 import { el, mount, formatMoney, formatDateTime, showToast, refreshIcons } from "../utils.js";
 import { StatCard, ProgressBar } from "../ui.js";
 import { goTo } from "../router.js";
@@ -139,7 +139,7 @@ function startLiveTelemetry() {
 
     // The dashboard has been navigated away from and its DOM removed —
     // stop polling instead of ticking forever in the background.
-    if (!rttEl && activeTelemetryInterval) {
+    if ((!rttEl || !isAuthenticated()) && activeTelemetryInterval) {
       clearInterval(activeTelemetryInterval);
       activeTelemetryInterval = null;
       return;
