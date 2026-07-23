@@ -30,10 +30,14 @@ export function titleCase(value) {
   return String(value).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const activeLoadingButtons = new Map();
+
 export function setButtonLoadingState(button, loading = true, loadingLabel = null) {
   if (!button || !(button instanceof HTMLElement)) return;
 
   if (loading) {
+    if (activeLoadingButtons.has(button)) return;
+
     button.classList.add("is-loading");
     button.disabled = true;
 
@@ -44,14 +48,63 @@ export function setButtonLoadingState(button, loading = true, loadingLabel = nul
       spinner.setAttribute("aria-hidden", "true");
       button.prepend(spinner);
     }
+
+    activeLoadingButtons.set(button, Date.now());
     return;
   }
 
-  button.classList.remove("is-loading");
-  button.disabled = false;
+  const startTime = activeLoadingButtons.get(button);
+  const finish = () => {
+    button.classList.remove("is-loading");
+    button.disabled = false;
+    const spinner = button.querySelector(".btn-spinner");
+    if (spinner) spinner.remove();
+  };
 
-  const spinner = button.querySelector(".btn-spinner");
-  if (spinner) spinner.remove();
+  if (startTime) {
+    activeLoadingButtons.delete(button);
+    const elapsed = Date.now() - startTime;
+    const minTime = 350; // Keep spinner visible for at least 350ms
+    const remaining = Math.max(0, minTime - elapsed);
+    if (remaining > 0) {
+      setTimeout(finish, remaining);
+    } else {
+      finish();
+    }
+  } else {
+    finish();
+  }
+}
+
+/** Registers global click and submit handlers to show loading spinners on all buttons. */
+export function initGlobalButtonSpinners() {
+  document.addEventListener(
+    "click",
+    (e) => {
+      const btn = e.target?.closest ? e.target.closest("button, .btn, [role='button']") : null;
+      if (!btn || btn.disabled || btn.classList.contains("is-loading")) return;
+      setButtonLoadingState(btn, true);
+      setTimeout(() => {
+        setButtonLoadingState(btn, false);
+      }, 450);
+    },
+    true
+  );
+
+  document.addEventListener(
+    "submit",
+    (e) => {
+      const form = e.target;
+      if (!form || !(form instanceof HTMLFormElement)) return;
+      const submitBtn = form.querySelector("button[type='submit'], button.btn-primary, button:not([type='button'])");
+      if (!submitBtn) return;
+      setButtonLoadingState(submitBtn, true);
+      setTimeout(() => {
+        setButtonLoadingState(submitBtn, false);
+      }, 550);
+    },
+    true
+  );
 }
 
 /** Minimal, dependency-free element builder. */

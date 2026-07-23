@@ -1,6 +1,6 @@
 import { login, logout, isAuthenticated, loadCurrentUser, getCurrentUser } from "./auth.js";
 import { registerRoute, startRouter, goTo, refreshCurrentRoute } from "./router.js";
-import { showToast, titleCase, setButtonLoadingState, el, initials, refreshIcons, debounce } from "./utils.js";
+import { showToast, titleCase, setButtonLoadingState, el, initials, refreshIcons, debounce, initGlobalButtonSpinners } from "./utils.js";
 import { api } from "./api.js";
 import { initCommandPalette } from "./command-palette.js";
 
@@ -149,6 +149,7 @@ function initNotificationSync() {
 
 async function bootstrap() {
   initCommandPalette();
+  initGlobalButtonSpinners();
   if (isAuthenticated()) {
     try {
       await loadCurrentUser();
