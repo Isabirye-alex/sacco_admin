@@ -30,14 +30,10 @@ export function titleCase(value) {
   return String(value).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function setButtonLoadingState(button, loading = true, loadingLabel = "Loading...") {
-  if (!(button instanceof HTMLButtonElement)) return;
+export function setButtonLoadingState(button, loading = true, loadingLabel = null) {
+  if (!button || !(button instanceof HTMLElement)) return;
 
   if (loading) {
-    if (!button.dataset.defaultText) {
-      button.dataset.defaultText = button.textContent.trim();
-    }
-
     button.classList.add("is-loading");
     button.disabled = true;
 
@@ -46,28 +42,16 @@ export function setButtonLoadingState(button, loading = true, loadingLabel = "Lo
       spinner = document.createElement("span");
       spinner.className = "btn-spinner";
       spinner.setAttribute("aria-hidden", "true");
+      button.prepend(spinner);
     }
-
-    const label = document.createElement("span");
-    label.className = "btn-label";
-    label.textContent = loadingLabel;
-
-    button.replaceChildren(spinner, label);
     return;
   }
 
   button.classList.remove("is-loading");
   button.disabled = false;
 
-  const label = button.querySelector(".btn-label");
-  if (label) label.remove();
-
   const spinner = button.querySelector(".btn-spinner");
   if (spinner) spinner.remove();
-
-  if (button.dataset.defaultText) {
-    button.appendChild(document.createTextNode(button.dataset.defaultText));
-  }
 }
 
 /** Minimal, dependency-free element builder. */

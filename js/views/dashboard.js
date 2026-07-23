@@ -219,7 +219,7 @@ async function refreshData() {
 
   try {
     const [membersData, loansData, parData, flagsData, tbData, glSettings, accounts, auditLogs] = await Promise.all([
-      api.get("/api/v1/members?page_size=1000").catch(() => ({ items: [], total: 0 })),
+      api.get("/api/v1/members?page_size=200").catch(() => ({ items: [], total: 0 })),
       api.get("/api/v1/loans/applications").catch(() => []),
       api.get("/api/v1/risk/portfolio-at-risk").catch(() => null),
       api.get("/api/v1/risk/flags?flag_status=open").catch(() => []),
