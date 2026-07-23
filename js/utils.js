@@ -22,6 +22,46 @@ export function titleCase(value) {
   return String(value).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+export function setButtonLoadingState(button, loading = true, loadingLabel = "Loading...") {
+  if (!(button instanceof HTMLButtonElement)) return;
+
+  if (loading) {
+    if (!button.dataset.defaultText) {
+      button.dataset.defaultText = button.textContent.trim();
+    }
+
+    button.classList.add("is-loading");
+    button.disabled = true;
+
+    let spinner = button.querySelector(".btn-spinner");
+    if (!spinner) {
+      spinner = document.createElement("span");
+      spinner.className = "btn-spinner";
+      spinner.setAttribute("aria-hidden", "true");
+    }
+
+    const label = document.createElement("span");
+    label.className = "btn-label";
+    label.textContent = loadingLabel;
+
+    button.replaceChildren(spinner, label);
+    return;
+  }
+
+  button.classList.remove("is-loading");
+  button.disabled = false;
+
+  const label = button.querySelector(".btn-label");
+  if (label) label.remove();
+
+  const spinner = button.querySelector(".btn-spinner");
+  if (spinner) spinner.remove();
+
+  if (button.dataset.defaultText) {
+    button.appendChild(document.createTextNode(button.dataset.defaultText));
+  }
+}
+
 /** Minimal, dependency-free element builder. */
 export function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -29,7 +69,23 @@ export function el(tag, attrs = {}, children = []) {
     if (key === "class") node.className = value;
     else if (key === "html") node.innerHTML = value;
     else if (key.startsWith("on") && typeof value === "function") {
-      node.addEventListener(key.slice(2).toLowerCase(), value);
+      const eventName = key.slice(2).toLowerCase();
+      node.addEventListener(eventName, async (event) => {
+        if (eventName === "click" && node.tagName === "BUTTON") {
+          setButtonLoadingState(node, true);
+        }
+
+        try {
+          const result = value(event);
+          if (result && typeof result.then === "function") {
+            await result;
+          }
+        } finally {
+          if (eventName === "click" && node.tagName === "BUTTON") {
+            setButtonLoadingState(node, false);
+          }
+        }
+      });
     } else if (value !== undefined && value !== null && value !== false) {
       node.setAttribute(key, value === true ? "" : value);
     }

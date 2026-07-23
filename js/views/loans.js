@@ -177,11 +177,13 @@ async function renderApplicationsTab(content, root) {
 async function openLoanDetail(loanId, content, root) {
   const loan = await api.get(`/api/v1/loans/applications/${loanId}`);
   
-  // FETCH ADDITIONAL CONTEXT IN PARALLEL FOR RISK EVALUATION PANEL
-  const [member, holdings, memberLoans] = await Promise.all([
+  // FETCH ADDITIONAL CONTEXT IN PARALLEL FOR RISK EVALUATION PANEL & GROUP GUARANTEES
+  const [member, holdings, memberLoans, groupGuarantees, allGroups] = await Promise.all([
     api.get(`/api/v1/members/${loan.member_id}`).catch(() => null),
     api.get(`/api/v1/shares/members/${loan.member_id}/holdings`).catch(() => []),
     api.get(`/api/v1/loans/applications?member_id=${loan.member_id}`).catch(() => []),
+    api.get(`/api/v1/loans/applications/${loan.id}/group-guarantees`).catch(() => []),
+    api.get(`/api/v1/groups`).catch(() => []),
   ]);
 
   // Compute stats for Loan Details Panel
@@ -236,9 +238,9 @@ async function openLoanDetail(loanId, content, root) {
     ]);
     body.push(metricsPanel);
 
-    // Guarantors grid
+    // Individual Guarantors grid
     if (loan.guarantors?.length) {
-      body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Guarantors list"));
+      body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Individual Guarantors"));
       body.push(dataTable(
         [
           { header: "Amount Guaranteed", className: "ledger", render: (g) => `UGX ${formatMoney(g.amount_guaranteed)}` },
@@ -247,6 +249,56 @@ async function openLoanDetail(loanId, content, root) {
         loan.guarantors
       ));
     }
+
+    // Group Loan Guarantees Section
+    const groupHeader = el("div", { style: "display:flex; justify-content:space-between; align-items:center; margin-top:15px; margin-bottom:8px;" }, [
+      el("div", { class: "section-title", style: "font-weight:600; margin:0;" }, "Group Loan Guarantees"),
+      ["pending", "under_review"].includes(loan.status)
+        ? el("button", {
+            class: "btn btn-secondary btn-sm",
+            onclick: () => openAttachGroupGuaranteeModal(loan, allGroups, closeFn, content, root),
+          }, "+ Attach Group Guarantee")
+        : el("span", {}),
+    ]);
+    body.push(groupHeader);
+
+    const groupGuaranteeTable = dataTable(
+      [
+        {
+          header: "Group Name",
+          render: (gg) => {
+            const grp = allGroups.find((g) => g.id === gg.group_id);
+            return grp ? el("strong", {}, grp.name) : gg.group_id;
+          },
+        },
+        { header: "Amount Guaranteed", className: "ledger", render: (gg) => `UGX ${formatMoney(gg.amount_guaranteed)}` },
+        { header: "Status", render: (gg) => (gg.approved ? badge("approved") : badge("pending")) },
+        {
+          header: "Actions",
+          render: (gg) => {
+            if (!gg.approved && ["pending", "under_review"].includes(loan.status)) {
+              return el("button", {
+                class: "btn btn-primary btn-sm",
+                onclick: async () => {
+                  try {
+                    await api.post(`/api/v1/loans/group-guarantees/${gg.id}/approve`);
+                    showToast("Group guarantee approved successfully.", "success");
+                    closeFn();
+                    openLoanDetail(loan.id, content, root);
+                  } catch (err) {
+                    showToast(err.message, "error");
+                  }
+                },
+              }, "Approve");
+            }
+            return gg.approved ? el("span", { class: "muted small" }, `Approved ${gg.approved_at ? formatDate(gg.approved_at) : ""}`) : "—";
+          },
+        },
+      ],
+      groupGuarantees,
+      "No group guarantees attached."
+    );
+    body.push(groupGuaranteeTable);
 
     // Collaterals list
     if (loan.collaterals?.length) {
@@ -613,4 +665,60 @@ async function triggerGuarantorNotices(loan) {
   } catch (err) {
     showToast(err.message, "error");
   }
+}
+
+function openAttachGroupGuaranteeModal(loan, allGroups, closeParent, content, root) {
+  openModal(`Attach Group Guarantee \u2014 ${loan.loan_number}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    if (!allGroups.length) {
+      return [
+        el("p", { class: "muted" }, "No member groups exist yet. Create a group under 'Groups' first."),
+        el("div", { class: "modal-actions" }, [
+          el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Close"),
+        ]),
+      ];
+    }
+
+    const groupSelect = el(
+      "select",
+      { id: "gg-group", required: true },
+      allGroups.map((g) => el("option", { value: g.id }, g.name))
+    );
+    const amountInput = el("input", {
+      id: "gg-amount",
+      type: "number",
+      step: "0.01",
+      value: String(loan.amount_requested),
+      required: true,
+    });
+
+    const form = el("form", {}, [
+      el("div", { class: "field" }, [el("label", {}, "Select Member Group"), groupSelect]),
+      el("div", { class: "field" }, [el("label", {}, "Amount Guaranteed (UGX)"), amountInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Attach Guarantee"),
+      ]),
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await api.post(`/api/v1/loans/applications/${loan.id}/group-guarantees`, {
+          group_id: groupSelect.value,
+          amount_guaranteed: Number(amountInput.value),
+        });
+        showToast("Group guarantee attached.", "success");
+        closeFn();
+        if (closeParent) closeParent();
+        openLoanDetail(loan.id, content, root);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
 }

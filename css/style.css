@@ -104,7 +104,22 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .btn-danger:hover { filter: brightness(0.92); }
 .btn-block { width: 100%; }
 .btn-sm { padding: 6px 12px; font-size: 13px; }
+.btn.is-loading { cursor: wait; pointer-events: none; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  animation: btn-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes btn-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 /* ---------- Auth screen ---------- */
 .auth-screen {

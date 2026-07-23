@@ -1,6 +1,6 @@
 import { login, logout, isAuthenticated, loadCurrentUser, getCurrentUser } from "./auth.js";
 import { registerRoute, startRouter, goTo, refreshCurrentRoute } from "./router.js";
-import { showToast, titleCase } from "./utils.js";
+import { showToast, titleCase, setButtonLoadingState } from "./utils.js";
 
 import { renderDashboard } from "./views/dashboard.js";
 import { renderMembers } from "./views/members.js";
@@ -15,6 +15,7 @@ import { renderReports } from "./views/reports.js";
 import { renderRisk } from "./views/risk.js";
 import { renderUsers } from "./views/users.js";
 import { renderReferrals } from "./views/referrals.js";
+import { renderBranches } from "./views/branches.js";
 
 registerRoute("/dashboard", "Dashboard", renderDashboard);
 registerRoute("/members", "Members", renderMembers);
@@ -29,6 +30,7 @@ registerRoute("/reports", "Reports & Analytics", renderReports);
 registerRoute("/risk", "Risk & Compliance", renderRisk);
 registerRoute("/referrals", "Referrals", renderReferrals);
 registerRoute("/users", "Users & Audit", renderUsers);
+registerRoute("/branches", "Branch Management", renderBranches);
 
 function renderUserChip() {
   const user = getCurrentUser();
@@ -193,8 +195,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   errorEl.hidden = true;
 
   const submitBtn = e.target.querySelector("button[type=submit]");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Signing in\u2026";
+  setButtonLoadingState(submitBtn, true, "Signing in…");
 
   try {
     await login(email, password);
@@ -206,7 +207,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     errorEl.textContent = err.message || "Unable to sign in.";
     errorEl.hidden = false;
   } finally {
-    submitBtn.disabled = false;
+    setButtonLoadingState(submitBtn, false);
     submitBtn.textContent = "Sign in";
   }
 });
