@@ -32,7 +32,10 @@
         <label>Password
           <input type="password" id="login-password" required autocomplete="current-password" placeholder="••••••••••" />
         </label>
-        <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top: 8px;">Sign in</button>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;cursor:pointer;user-select:none;">
+          <input type="checkbox" id="login-remember" /> Remember me on this device
+        </label>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top: 12px;">Sign in</button>
         <p id="login-error" class="form-error" hidden></p>
       </form>
       <p class="auth-hint">Need help signing in? Contact your system administrator.</p>

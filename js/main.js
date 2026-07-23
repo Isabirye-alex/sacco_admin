@@ -170,6 +170,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = document.getElementById("login-email").value;
   const password = document.getElementById("login-password").value;
+  const remember = document.getElementById("login-remember")?.checked || false;
   const errorEl = document.getElementById("login-error");
   errorEl.hidden = true;
 
@@ -177,7 +178,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   setButtonLoadingState(submitBtn, true, "Signing in…");
 
   try {
-    await login(email, password);
+    await login(email, password, remember);
     renderUserChip();
     goTo("/dashboard");
     refreshCurrentRoute();
