@@ -39,7 +39,8 @@ export function setButtonLoadingState(button, loading = true, loadingLabel = nul
     if (activeLoadingButtons.has(button)) return;
 
     button.classList.add("is-loading");
-    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+    button.style.pointerEvents = "none";
 
     let spinner = button.querySelector(".btn-spinner");
     if (!spinner) {
@@ -56,7 +57,8 @@ export function setButtonLoadingState(button, loading = true, loadingLabel = nul
   const startTime = activeLoadingButtons.get(button);
   const finish = () => {
     button.classList.remove("is-loading");
-    button.disabled = false;
+    button.removeAttribute("aria-disabled");
+    button.style.pointerEvents = "";
     const spinner = button.querySelector(".btn-spinner");
     if (spinner) spinner.remove();
   };
@@ -82,13 +84,13 @@ export function initGlobalButtonSpinners() {
     "click",
     (e) => {
       const btn = e.target?.closest ? e.target.closest("button, .btn, [role='button']") : null;
-      if (!btn || btn.disabled || btn.classList.contains("is-loading")) return;
+      if (!btn || btn.getAttribute("aria-disabled") === "true" || btn.classList.contains("is-loading")) return;
       setButtonLoadingState(btn, true);
       setTimeout(() => {
         setButtonLoadingState(btn, false);
       }, 450);
     },
-    true
+    false
   );
 
   document.addEventListener(
@@ -103,7 +105,7 @@ export function initGlobalButtonSpinners() {
         setButtonLoadingState(submitBtn, false);
       }, 550);
     },
-    true
+    false
   );
 }
 
