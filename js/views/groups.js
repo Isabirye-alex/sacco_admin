@@ -58,11 +58,12 @@ function openCreateGroupModal(root) {
 }
 
 async function renderGroupDetail(root, groupId) {
-  const [groups, contributions, groupGuarantees, loans] = await Promise.all([
+  const [groups, contributions, groupGuarantees, loans, meetings] = await Promise.all([
     api.get("/api/v1/groups"),
     api.get(`/api/v1/groups/${groupId}/contributions`),
     api.get(`/api/v1/loans/groups/${groupId}/guarantees`).catch(() => []),
     api.get("/api/v1/loans/applications").catch(() => []),
+    api.get(`/api/v1/groups/${groupId}/meetings`).catch(() => []),
   ]);
   const group = groups.find((g) => g.id === groupId);
 
@@ -71,6 +72,30 @@ async function renderGroupDetail(root, groupId) {
   const header = el("div", { class: "detail-header" }, [
     el("div", {}, [el("h2", {}, group ? group.name : "Group"), el("p", { class: "muted" }, group?.description || "")]),
     el("button", { class: "btn btn-primary btn-sm", onclick: () => openAddMemberModal(root, groupId) }, "+ Add member"),
+  ]);
+
+  const meetingsCard = el("div", { class: "card", style: "margin-bottom: 20px;" }, [
+    el("div", { class: "card-header" }, [
+      el("h3", {}, "Meetings & Attendance"),
+      el("button", { class: "btn btn-primary btn-sm", onclick: () => openRecordMeetingModal(root, groupId) }, "+ Record Meeting"),
+    ]),
+    dataTable(
+      [
+        { header: "Date", render: (m) => formatDate(m.meeting_date) },
+        { header: "Location", render: (m) => m.location || "\u2014" },
+        { header: "Minutes / Summary", render: (m) => m.minutes || "\u2014" },
+        {
+          header: "Actions",
+          render: (m) =>
+            el("button", {
+              class: "btn btn-secondary btn-sm",
+              onclick: () => openAttendanceModal(root, m, group?.members || []),
+            }, "Mark Attendance"),
+        },
+      ],
+      meetings,
+      "No group meetings recorded yet."
+    ),
   ]);
 
   const contribCard = el("div", { class: "card", style: "margin-bottom: 20px;" }, [
@@ -128,7 +153,89 @@ async function renderGroupDetail(root, groupId) {
     ),
   ]);
 
-  mount(root, [backBtn, header, contribCard, guaranteeCard]);
+  mount(root, [backBtn, header, meetingsCard, contribCard, guaranteeCard]);
+}
+
+function openRecordMeetingModal(root, groupId) {
+  openModal("Record Group Meeting", (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const today = new Date().toISOString().split("T")[0];
+    const form = el("form", {}, [
+      el("div", { class: "field" }, [el("label", {}, "Meeting Date"), el("input", { id: "m-date", type: "date", value: today, required: true })]),
+      el("div", { class: "field" }, [el("label", {}, "Location / Venue"), el("input", { id: "m-loc", placeholder: "e.g. SACCO Hall / Community Center" })]),
+      el("div", { class: "field" }, [el("label", {}, "Meeting Minutes / Notes"), el("textarea", { id: "m-min", rows: 3, placeholder: "Key decisions, agenda, discussions..." })]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Save Meeting"),
+      ]),
+    ]);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await api.post(`/api/v1/groups/${groupId}/meetings`, {
+          meeting_date: form.querySelector("#m-date").value,
+          location: form.querySelector("#m-loc").value || null,
+          minutes: form.querySelector("#m-min").value || null,
+        });
+        showToast("Group meeting recorded.", "success");
+        closeFn();
+        await renderGroupDetail(root, groupId);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
+}
+
+function openAttendanceModal(root, meeting, groupMembers) {
+  openModal(`Mark Attendance - ${formatDate(meeting.meeting_date)}`, (closeFn) => {
+    let selected = null;
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const picker = memberPicker(
+      (q) => api.get(`/api/v1/members?q=${encodeURIComponent(q)}`).then((r) => r.items),
+      (m) => { selected = m; }
+    );
+    const statusSelect = el("select", {}, [
+      el("option", { value: "PRESENT" }, "Present"),
+      el("option", { value: "ABSENT" }, "Absent"),
+      el("option", { value: "APOLOGY" }, "Apology Sent"),
+      el("option", { value: "EXCUSED" }, "Excused"),
+    ]);
+
+    const form = el("form", {}, [
+      el("div", { class: "field" }, [el("label", {}, "Group Member"), picker]),
+      el("div", { class: "field" }, [el("label", {}, "Attendance Status"), statusSelect]),
+      el("div", { class: "field" }, [el("label", {}, "Notes / Reason (optional)"), el("input", { id: "a-notes", placeholder: "e.g. Sick leave" })]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Save Attendance"),
+      ]),
+    ]);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      if (!selected) { errorEl.textContent = "Select a member first."; errorEl.hidden = false; return; }
+      try {
+        await api.post(`/api/v1/groups/meetings/${meeting.id}/attendance`, {
+          member_id: selected.id,
+          status: statusSelect.value,
+          notes: form.querySelector("#a-notes").value || null,
+        });
+        showToast("Attendance marked.", "success");
+        closeFn();
+        if (state.selectedId) await renderGroupDetail(root, state.selectedId);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
 }
 
 function openAddMemberModal(root, groupId) {

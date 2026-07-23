@@ -40,7 +40,8 @@ function renderReportAccordion() {
       reports: [
         { name: "Balance Sheet", key: "balance-sheet", desc: "Summarizes Assets, Liabilities, and Equity balances." },
         { name: "Trial Balance", key: "trial-balance", desc: "Double-entry check of debits vs. credits across all accounts." },
-        { name: "Income Statement", key: "income-statement", desc: "Covers revenue, expenses, and net profit margins over time." }
+        { name: "Income Statement", key: "income-statement", desc: "Covers revenue, expenses, and net profit margins over time." },
+        { name: "Statement of Cash Flows", key: "cash-flow", desc: "Cash inflows and outflows across Operating, Investing, and Financing activities." },
       ]
     },
     {
@@ -194,6 +195,27 @@ async function compileAndDisplayPreview(rep, previewEl, fromDate, toDate) {
         ),
         el("p", { class: "muted small", style: "margin-top:10px" },
           `Total income UGX ${formatMoney(data.total_income)} \u2014 Total expenses UGX ${formatMoney(data.total_expenses)} \u2014 Net surplus UGX ${formatMoney(data.net_surplus)}`
+        ),
+      ]);
+    } else if (rep.key === "cash-flow") {
+      if (!fromDate || !toDate) throw new Error("Select both a From and To date for the Cash Flow Statement.");
+      const data = await api.get(`/api/v1/reports/cash-flow?start_date=${fromDate}&end_date=${toDate}`);
+      const rows = [
+        { section: "Operating Activities", val: `UGX ${formatMoney(data.operating_cash_flow)}` },
+        { section: "Investing Activities", val: `UGX ${formatMoney(data.investing_cash_flow)}` },
+        { section: "Financing Activities", val: `UGX ${formatMoney(data.financing_cash_flow)}` },
+        { section: "Net Change in Cash", val: `UGX ${formatMoney(data.net_cash_flow)}` },
+      ];
+      content = el("div", {}, [
+        dataTable(
+          [
+            { header: "Activity Classification", render: (r) => el("strong", {}, r.section) },
+            { header: "Net Cash Flow", className: "ledger", render: (r) => r.val },
+          ],
+          rows
+        ),
+        el("p", { class: "muted small", style: "margin-top:10px" },
+          `Cash at start: UGX ${formatMoney(data.cash_at_start)} \u2014 Cash at end: UGX ${formatMoney(data.cash_at_end)}`
         ),
       ]);
     } else if (rep.key === "liquidity-ratio") {

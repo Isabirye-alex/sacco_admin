@@ -307,6 +307,28 @@ async function openLoanDetail(loanId, content, root) {
         [
           { header: "Type", render: (c) => titleCase(c.collateral_type) },
           { header: "Value", className: "ledger", render: (c) => `UGX ${formatMoney(c.estimated_value)}` },
+          { header: "Status", render: (c) => (c.is_released ? badge("released") : badge("held")) },
+          {
+            header: "Actions",
+            render: (c) => {
+              if (!c.is_released) {
+                return el("button", {
+                  class: "btn btn-secondary btn-sm",
+                  onclick: async () => {
+                    try {
+                      await api.post(`/api/v1/loans/collateral/${c.id}/release`);
+                      showToast("Collateral asset released.", "success");
+                      closeFn();
+                      openLoanDetail(loan.id, content, root);
+                    } catch (err) {
+                      showToast(err.message, "error");
+                    }
+                  },
+                }, "Release Collateral");
+              }
+              return el("span", { class: "muted small" }, `Released ${c.released_at ? formatDate(c.released_at) : ""}`);
+            },
+          },
         ],
         loan.collaterals
       ));
@@ -332,8 +354,9 @@ async function openLoanDetail(loanId, content, root) {
         },
       }, "View Repayment Schedule"));
 
-      // Recovery actions for active loans
-      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => restructureLoan(loan, closeFn, content, root) }, "Restructure Loan"));
+      // Recovery and restructuring actions for active loans
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => restructureLoan(loan, closeFn, content, root) }, "Reschedule Term"));
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => openTopUpModal(loan, closeFn, content, root) }, "Loan Top-Up"));
       actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => waivePenalties(loan, closeFn, content, root) }, "Waive Penalties"));
       actions.appendChild(el("button", { class: "btn btn-danger btn-sm", onclick: () => writeOffLoan(loan, closeFn, content, root) }, "Write off Loan"));
       actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => triggerGuarantorNotices(loan) }, "Alert Guarantors"));
@@ -615,6 +638,42 @@ function restructureLoan(loan, closeParent, content, root) {
         });
         showToast("Loan restructured \u2014 new schedule generated.", "success");
         closeFn(); closeParent();
+        await renderTabContent(content, root);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
+}
+
+function openTopUpModal(loan, closeParent, content, root) {
+  openModal(`Loan Top-Up \u2014 ${loan.loan_number}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const topUpInput = el("input", { type: "number", required: true, min: "1000", step: "1" });
+    const termInput = el("input", { type: "number", value: loan.repayment_months, required: true, min: "1" });
+    const form = el("form", {}, [
+      el("p", { class: "muted" }, "Issues additional principal onto an existing active loan and recalculates future installments."),
+      el("div", { class: "field" }, [el("label", {}, "Top-Up Amount (UGX)"), topUpInput]),
+      el("div", { class: "field" }, [el("label", {}, "New Total Repayment Term (months)"), termInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Process Top-Up"),
+      ]),
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await api.post(`/api/v1/loans/applications/${loan.id}/top-up`, {
+          top_up_amount: Number(topUpInput.value),
+          new_repayment_months: Number(termInput.value),
+        });
+        showToast("Loan top-up processed successfully.", "success");
+        closeFn(); if (closeParent) closeParent();
         await renderTabContent(content, root);
       } catch (err) {
         errorEl.textContent = err.message;
