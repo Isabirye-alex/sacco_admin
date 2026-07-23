@@ -343,21 +343,25 @@ function matchesDate(dateStr) {
 }
 
 async function renderCharts(root, filteredLoans) {
+  const savingsEl = el("div", { class: "chart-wrap", id: "chart-savings-trends" });
+  const loansEl = el("div", { class: "chart-wrap", id: "chart-loans-trends" });
+  const productEl = el("div", { class: "chart-wrap", id: "chart-product-dist" });
+  const statusEl = el("div", { class: "chart-wrap", id: "chart-loan-status" });
+
   mount(root, [
-    el("div", { class: "chart-card" }, [el("h3", {}, "Savings vs. Withdrawals (last 7 months)"), el("div", { class: "chart-wrap", id: "chart-savings-trends" })]),
-    el("div", { class: "chart-card" }, [el("h3", {}, "Loan Disbursements vs. Repayments"), el("div", { class: "chart-wrap", id: "chart-loans-trends" })]),
-    el("div", { class: "chart-card" }, [el("h3", {}, "Product Volume Distribution"), el("div", { class: "chart-wrap", id: "chart-product-dist" })]),
-    el("div", { class: "chart-card" }, [el("h3", {}, "Loan Portfolio Status"), el("div", { class: "chart-wrap", id: "chart-loan-status" })]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Savings vs. Withdrawals (last 7 months)"), savingsEl]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Loan Disbursements vs. Repayments"), loansEl]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Product Volume Distribution"), productEl]),
+    el("div", { class: "chart-card" }, [el("h3", {}, "Loan Portfolio Status"), statusEl]),
   ]);
 
-  const showUnavailable = (id, message) => {
-    const target = document.getElementById(id);
-    if (target) target.innerHTML = `<p class="muted small">${message}</p>`;
+  const showUnavailable = (targetEl, message) => {
+    if (targetEl) targetEl.innerHTML = `<p class="muted small">${message}</p>`;
   };
 
   if (typeof Plotly === "undefined") {
-    ["chart-savings-trends", "chart-loans-trends", "chart-product-dist", "chart-loan-status"].forEach((id) => showUnavailable(id, "Chart library unavailable."));
-    renderLoanStatusChart(filteredLoans);
+    [savingsEl, loansEl, productEl, statusEl].forEach((elem) => showUnavailable(elem, "Chart library unavailable."));
+    renderLoanStatusChart(filteredLoans, statusEl);
     return;
   }
 
@@ -375,19 +379,21 @@ async function renderCharts(root, filteredLoans) {
     const params = new URLSearchParams({ months: "7", range: filterState.dateRange, branch: filterState.branch });
     trends = await api.get(`/api/v1/reports/dashboard-trends?${params.toString()}`);
   } catch {
-    showUnavailable("chart-savings-trends", "Trend data unavailable.");
-    showUnavailable("chart-loans-trends", "Trend data unavailable.");
-    showUnavailable("chart-product-dist", "Trend data unavailable.");
-    renderLoanStatusChart(filteredLoans);
+    showUnavailable(savingsEl, "Trend data unavailable.");
+    showUnavailable(loansEl, "Trend data unavailable.");
+    showUnavailable(productEl, "Trend data unavailable.");
+    renderLoanStatusChart(filteredLoans, statusEl);
     return;
   }
+
+  if (!savingsEl.isConnected && !document.contains(savingsEl)) return;
 
   const months = trends.monthly_savings.map((m) => m.month);
   const deposits = trends.monthly_savings.map((m) => Number(m.deposits));
   const withdrawals = trends.monthly_savings.map((m) => Number(m.withdrawals));
 
   Plotly.newPlot(
-    "chart-savings-trends",
+    savingsEl,
     [
       { x: months, y: deposits, type: "scatter", mode: "lines+markers", name: "Deposits", line: { color: "#1B4B43", width: 3 }, marker: { size: 6 } },
       { x: months, y: withdrawals, type: "scatter", mode: "lines+markers", name: "Withdrawals", line: { color: "#B3261E", width: 2, dash: "dot" }, marker: { size: 6 } },
@@ -399,7 +405,7 @@ async function renderCharts(root, filteredLoans) {
   const disbs = trends.monthly_loans.map((m) => Number(m.disbursed));
   const repays = trends.monthly_loans.map((m) => Number(m.repaid));
   Plotly.newPlot(
-    "chart-loans-trends",
+    loansEl,
     [
       { x: months, y: disbs, type: "bar", name: "Disbursements", marker: { color: "#23685C" } },
       { x: months, y: repays, type: "bar", name: "Repayments", marker: { color: "#C89B3C" } },
@@ -409,10 +415,10 @@ async function renderCharts(root, filteredLoans) {
   );
 
   if (!trends.product_distribution.length) {
-    showUnavailable("chart-product-dist", "No active savings balances yet.");
+    showUnavailable(productEl, "No active savings balances yet.");
   } else {
     Plotly.newPlot(
-      "chart-product-dist",
+      productEl,
       [
         {
           labels: trends.product_distribution.map((p) => p.product),
@@ -429,14 +435,14 @@ async function renderCharts(root, filteredLoans) {
     );
   }
 
-  renderLoanStatusChart(filteredLoans);
+  renderLoanStatusChart(filteredLoans, statusEl);
 }
 
 // Builds the loan status donut from the loans already fetched (and filtered)
 // in refreshData, instead of re-fetching every loan application from scratch.
-function renderLoanStatusChart(filteredLoans) {
-  const target = document.getElementById("chart-loan-status");
-  if (!target) return;
+function renderLoanStatusChart(filteredLoans, targetEl) {
+  const target = targetEl || document.getElementById("chart-loan-status");
+  if (!target || (!target.isConnected && !document.contains(target))) return;
 
   const statusCount = {};
   (filteredLoans || []).forEach((l) => {
@@ -456,7 +462,7 @@ function renderLoanStatusChart(filteredLoans) {
 
   const values = labels.map((l) => statusCount[l]);
   Plotly.newPlot(
-    "chart-loan-status",
+    target,
     [
       {
         labels: labels.map((l) => l.replace(/_/g, " ")),
