@@ -10,6 +10,91 @@
   <link rel="stylesheet" href="css/style.css" />
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" defer></script>
+
+  <!--
+    Topbar enhancement styles.
+    Scoped to the new elements only — nothing here overrides css/style.css.
+    Move into css/style.css whenever convenient; kept inline for now so this
+    ships working without touching the external stylesheet.
+  -->
+  <style>
+    .topbar { display: flex; align-items: center; gap: 16px; }
+
+    .topbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .topbar-titles { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+    .topbar-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--pine-600, #3f6d61); }
+    .topbar-titles h2 { margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .topbar-center { flex: 1; display: flex; justify-content: center; min-width: 0; padding: 0 12px; }
+    .topbar-search {
+      display: flex; align-items: center; gap: 10px;
+      width: 100%; max-width: 480px; min-width: 220px;
+      padding: 9px 16px; border-radius: 50px;
+      border: 1px solid var(--line, #dde3e0); background: #fff;
+      color: var(--ink-600, #5b665f); cursor: pointer; text-align: left;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .topbar-search:hover,
+    .topbar-search:focus-visible {
+      border-color: var(--pine-400, #6d9c8c);
+      box-shadow: 0 0 0 3px rgba(27, 75, 67, .08);
+      outline: none;
+    }
+    .topbar-search-icon { width: 15px; height: 15px; flex-shrink: 0; color: #94a29c; }
+    .topbar-search-placeholder { flex: 1; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .topbar-search-kbd { flex-shrink: 0; }
+
+    .topbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .topbar-pill-btn { display: flex; align-items: center; gap: 6px; border-radius: 50px; padding: 7px 14px; white-space: nowrap; }
+
+    .topbar-icon-btn {
+      display: flex; align-items: center; justify-content: center; width: 36px; height: 36px;
+      border-radius: 50%; border: 1px solid var(--line, #dde3e0); color: var(--ink-700, #33403a);
+      text-decoration: none; background: #fff; cursor: pointer;
+    }
+    .topbar-icon-btn:hover { background: var(--pine-50, #eef4f1); }
+
+    .topbar-divider { width: 1px; height: 26px; background: var(--line, #dde3e0); margin: 0 2px; }
+
+    .user-chip-topbar {
+      display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 4px;
+      border-radius: 999px; border: 1px solid var(--line, #dde3e0); background: #fff; cursor: pointer;
+    }
+    .user-chip-topbar:hover { background: var(--pine-50, #eef4f1); }
+    .topbar-user-info { display: flex; flex-direction: column; line-height: 1.1; text-align: left; }
+    .topbar-user-info .name { font-size: 12.5px; font-weight: 600; color: var(--ink-900, #1c2320); }
+    .topbar-user-info .role { font-size: 11px; color: #8a978f; }
+
+    .dropdown-wrap { position: relative; }
+    .dropdown-menu {
+      position: absolute; top: calc(100% + 8px); right: 0; min-width: 230px;
+      background: #fff; border: 1px solid var(--line, #dde3e0); border-radius: 12px;
+      box-shadow: var(--shadow-lg, 0 12px 32px rgba(20, 30, 26, .14));
+      padding: 6px; z-index: 10000;
+    }
+    .dropdown-menu:not(.dropdown-menu-right) { left: 0; right: auto; }
+    .dropdown-menu-label { padding: 8px 10px 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #8a978f; }
+    .dropdown-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px;
+      border-radius: 8px; border: none; background: none; text-align: left;
+      font-size: 13.5px; color: var(--ink-800, #252f2a); text-decoration: none; cursor: pointer;
+    }
+    .dropdown-item i { width: 15px; height: 15px; flex-shrink: 0; color: #6b7b73; }
+    .dropdown-item:hover { background: var(--pine-50, #eef4f1); }
+    .dropdown-item.is-active { color: var(--pine-700, #1b4b43); font-weight: 600; }
+    .dropdown-item-danger { color: var(--danger, #c0392b); }
+    .dropdown-item-danger i { color: var(--danger, #c0392b); }
+    .dropdown-menu-divider { height: 1px; background: var(--line, #dde3e0); margin: 6px 4px; }
+    .dropdown-menu-footer { padding: 8px 10px 4px; border-top: 1px solid var(--line, #dde3e0); margin-top: 4px; }
+    .dropdown-menu-footer a { font-size: 12.5px; color: var(--pine-700, #1b4b43); text-decoration: none; font-weight: 600; }
+
+    @media (max-width: 900px) {
+      .topbar-search-placeholder, .topbar-search-kbd { display: none; }
+      .topbar-search { width: auto; padding: 9px; justify-content: center; }
+      #branch-switcher-label { display: none; }
+      .topbar-user-info { display: none; }
+    }
+  </style>
 </head>
 
 <body>
@@ -141,16 +226,66 @@
 
     <div class="main-col">
       <header class="topbar">
-        <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+        <!-- Left: menu toggle + page context -->
+        <div class="topbar-left">
           <button id="menu-toggle" class="icon-btn" aria-label="Toggle menu">☰</button>
-          <h2 id="page-title">Dashboard</h2>
+          <div class="topbar-titles">
+            <span class="topbar-eyebrow" id="page-eyebrow">Operations</span>
+            <h2 id="page-title">Dashboard</h2>
+          </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <button id="cmdk-trigger" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 8px; min-width: 200px; justify-content: flex-start; color: var(--ink-600);">
-            <i data-lucide="search" style="width: 14px; height: 14px;"></i>
-            <span style="flex: 1; text-align: left;">Search or jump to…</span>
-            <span class="kbd">Ctrl K</span>
+
+        <!-- Center: global search / command palette -->
+        <div class="topbar-center">
+          <button id="cmdk-trigger" class="topbar-search" aria-label="Search or open command palette">
+            <i data-lucide="search" class="topbar-search-icon"></i>
+            <span class="topbar-search-placeholder">Search members, loans, transactions&hellip;</span>
+            <span class="kbd topbar-search-kbd">Ctrl K</span>
           </button>
+        </div>
+
+        <!-- Right: branch switcher, quick add, help, notifications, account -->
+        <div class="topbar-right">
+
+          <div class="dropdown-wrap">
+            <button id="branch-switcher-btn" class="btn btn-secondary btn-sm topbar-pill-btn" data-dropdown-target="branch-dropdown" aria-haspopup="true" aria-expanded="false">
+              <i data-lucide="building-2" style="width: 14px; height: 14px;"></i>
+              <span id="branch-switcher-label">Head Office</span>
+              <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
+            </button>
+            <div id="branch-dropdown" class="dropdown-menu" hidden>
+              <div class="dropdown-menu-label">Switch branch</div>
+              <button type="button" class="dropdown-item is-active" data-branch="head-office">
+                <i data-lucide="check"></i> Head Office
+              </button>
+              <button type="button" class="dropdown-item" data-branch="all">
+                <i data-lucide="globe"></i> All branches
+              </button>
+              <div class="dropdown-menu-footer">
+                <a href="#/branches">Manage branches</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="dropdown-wrap">
+            <button id="quick-add-btn" class="btn btn-primary btn-sm topbar-pill-btn" data-dropdown-target="quick-add-dropdown" aria-haspopup="true" aria-expanded="false">
+              <i data-lucide="plus" style="width: 14px; height: 14px;"></i>
+              <span>New</span>
+              <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
+            </button>
+            <div id="quick-add-dropdown" class="dropdown-menu dropdown-menu-right" hidden>
+              <div class="dropdown-menu-label">Create new</div>
+              <a class="dropdown-item" href="#/members?action=create"><i data-lucide="user-plus"></i> New member</a>
+              <a class="dropdown-item" href="#/savings?action=create"><i data-lucide="piggy-bank"></i> New savings account</a>
+              <a class="dropdown-item" href="#/loans?action=create"><i data-lucide="hand-coins"></i> New loan application</a>
+              <div class="dropdown-menu-divider"></div>
+              <a class="dropdown-item" href="#/members?action=bulk-upload"><i data-lucide="upload"></i> Bulk upload members</a>
+            </div>
+          </div>
+
+          <a href="#/help" class="topbar-icon-btn" aria-label="Help and documentation" title="Help &amp; documentation">
+            <i data-lucide="circle-help" style="width: 18px; height: 18px;"></i>
+          </a>
 
           <div class="bell-container" style="position: relative;">
             <button id="bell-btn" class="icon-btn" style="position: relative; display: flex; align-items: center; justify-content: center; padding: 8px; background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-700); cursor: pointer;" aria-label="System notifications">
@@ -168,6 +303,30 @@
               </div>
             </div>
           </div>
+
+          <div class="topbar-divider"></div>
+
+          <div class="dropdown-wrap">
+            <button id="topbar-avatar-btn" class="user-chip-topbar" data-dropdown-target="avatar-dropdown" aria-haspopup="true" aria-expanded="false">
+              <div class="user-avatar" id="topbar-user-avatar">SA</div>
+              <div class="topbar-user-info">
+                <span class="name" id="topbar-user-name">Staff Administrator</span>
+                <span class="role" id="topbar-user-role">Admin</span>
+              </div>
+              <i data-lucide="chevron-down" style="width: 14px; height: 14px; color: #8a978f;"></i>
+            </button>
+            <div id="avatar-dropdown" class="dropdown-menu dropdown-menu-right" hidden>
+              <div class="dropdown-menu-label">Signed in as <strong id="avatar-dropdown-email">admin@sacco.co.ug</strong></div>
+              <a class="dropdown-item" href="#/profile"><i data-lucide="user"></i> My profile</a>
+              <a class="dropdown-item" href="#/settings"><i data-lucide="settings"></i> Account settings</a>
+              <a class="dropdown-item" href="#/users"><i data-lucide="fingerprint"></i> Users &amp; audit</a>
+              <div class="dropdown-menu-divider"></div>
+              <button type="button" class="dropdown-item dropdown-item-danger" id="topbar-logout-btn">
+                <i data-lucide="log-out"></i> Log out
+              </button>
+            </div>
+          </div>
+
         </div>
       </header>
       <main id="view-root" class="view-root">
@@ -179,6 +338,69 @@
   <div id="toast-root" class="toast-root"></div>
 
   <script type="module" src="js/main.js"></script>
+
+  <!--
+    Lightweight, dependency-free interactions for the new topbar elements
+    (branch switcher, quick-add, help, avatar menu). Deliberately does not
+    touch #bell-btn / #bell-dropdown, since that is assumed to already be
+    wired up in js/main.js.
+  -->
+  <script>
+    (function () {
+      function closeAllDropdowns(except) {
+        document.querySelectorAll(".dropdown-menu").forEach((menu) => {
+          if (menu !== except) menu.hidden = true;
+        });
+        document.querySelectorAll("[data-dropdown-target]").forEach((btn) => {
+          btn.setAttribute("aria-expanded", "false");
+        });
+      }
+
+      document.querySelectorAll("[data-dropdown-target]").forEach((btn) => {
+        const menu = document.getElementById(btn.dataset.dropdownTarget);
+        if (!menu) return;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const willOpen = menu.hidden;
+          closeAllDropdowns(menu);
+          menu.hidden = !willOpen;
+          btn.setAttribute("aria-expanded", String(willOpen));
+        });
+      });
+
+      document.addEventListener("click", () => closeAllDropdowns());
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeAllDropdowns();
+      });
+
+      // Branch selection updates the pill label and closes the menu.
+      document.querySelectorAll("#branch-dropdown [data-branch]").forEach((item) => {
+        item.addEventListener("click", () => {
+          document.querySelectorAll("#branch-dropdown [data-branch]").forEach((i) => i.classList.remove("is-active"));
+          item.classList.add("is-active");
+          const label = document.getElementById("branch-switcher-label");
+          if (label) label.textContent = item.textContent.trim();
+          closeAllDropdowns();
+        });
+      });
+
+      // Route the topbar logout button through the existing sidebar logout
+      // handler so auth/session logic only needs to live in one place.
+      const topbarLogout = document.getElementById("topbar-logout-btn");
+      const mainLogout = document.getElementById("logout-btn");
+      if (topbarLogout && mainLogout) {
+        topbarLogout.addEventListener("click", () => mainLogout.click());
+      }
+
+      // Ctrl/Cmd+K opens the command palette trigger, matching the hint shown in the pill.
+      document.addEventListener("keydown", (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+          e.preventDefault();
+          document.getElementById("cmdk-trigger")?.click();
+        }
+      });
+    })();
+  </script>
 </body>
 
 </html>
