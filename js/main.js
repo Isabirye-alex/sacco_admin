@@ -1,6 +1,6 @@
 import { login, logout, isAuthenticated, loadCurrentUser, getCurrentUser } from "./auth.js";
 import { registerRoute, startRouter, goTo, refreshCurrentRoute } from "./router.js";
-import { showToast, el, initials, refreshIcons, debounce } from "./utils.js";
+import { showToast, titleCase, setButtonLoadingState, el, initials, refreshIcons, debounce, initGlobalButtonSpinners } from "./utils.js";
 import { api } from "./api.js";
 import { initCommandPalette } from "./command-palette.js";
 
@@ -18,6 +18,7 @@ import { renderReports } from "./views/reports.js";
 import { renderRisk } from "./views/risk.js";
 import { renderUsers } from "./views/users.js";
 import { renderReferrals } from "./views/referrals.js";
+import { renderBranches } from "./views/branches.js";
 import { renderSystem } from "./views/system.js";
 
 registerRoute("/dashboard", "Dashboard", renderDashboard);
@@ -35,6 +36,7 @@ registerRoute("/risk", "Risk & Compliance", renderRisk);
 registerRoute("/system", "System Health", renderSystem);
 registerRoute("/referrals", "Referrals", renderReferrals);
 registerRoute("/users", "Users & Audit", renderUsers);
+registerRoute("/branches", "Branch Management", renderBranches);
 
 function renderUserChip() {
   const user = getCurrentUser();
@@ -84,6 +86,7 @@ function initNotificationSync() {
   bellDropdown.addEventListener("click", (e) => e.stopPropagation());
 
   async function fetchSystemLogs() {
+    if (!isAuthenticated()) return;
     try {
       // Pull open risk flags + open workflow items as a proxy for system-level warnings
       const [flags, loans] = await Promise.all([
@@ -147,6 +150,7 @@ function initNotificationSync() {
 
 async function bootstrap() {
   initCommandPalette();
+  initGlobalButtonSpinners();
   if (isAuthenticated()) {
     try {
       await loadCurrentUser();
@@ -166,15 +170,15 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = document.getElementById("login-email").value;
   const password = document.getElementById("login-password").value;
+  const remember = document.getElementById("login-remember")?.checked || false;
   const errorEl = document.getElementById("login-error");
   errorEl.hidden = true;
 
   const submitBtn = e.target.querySelector("button[type=submit]");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Signing in…";
+  setButtonLoadingState(submitBtn, true, "Signing in…");
 
   try {
-    await login(email, password);
+    await login(email, password, remember);
     renderUserChip();
     goTo("/dashboard");
     refreshCurrentRoute();
@@ -184,7 +188,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     errorEl.textContent = err.message || "Unable to sign in.";
     errorEl.hidden = false;
   } finally {
-    submitBtn.disabled = false;
+    setButtonLoadingState(submitBtn, false);
     submitBtn.textContent = "Sign in";
   }
 });

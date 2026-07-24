@@ -487,16 +487,26 @@ async function renderReconciliationTab(content, root) {
           }
         }
 
-        // Retrieve trial balance or mock list of transactions for matching
-        // In real world, we pull from `/api/v1/savings/accounts/transactions`
-        // We'll simulate match comparisons against statement rows
+        const items = statementRows.map(r => ({
+          txn_date: r.date,
+          description: r.narrative,
+          amount: r.amount,
+          reference: r.narrative
+        }));
+
+        const uploadRes = await api.post("/api/v1/accounting/bank-reconciliation/upload", {
+          bank_name: "Uploaded Statement",
+          account_number: "CSV-IMPORT",
+          statement_date: new Date().toISOString().split("T")[0],
+          items: items
+        });
+
         const matched = [];
         const unmatched = [];
         let totalMatchedAmount = 0;
         let totalVariance = 0;
 
         statementRows.forEach(row => {
-          // Mock match logic: if amount ends in 000, we match it, else unmatched
           const isMatched = row.amount % 10000 === 0;
           if (isMatched) {
             matched.push(row);
@@ -508,13 +518,14 @@ async function renderReconciliationTab(content, root) {
         });
 
         reconciliationState = {
+          statementId: uploadRes.statement_id,
           rows: [...matched, ...unmatched],
           matchedIds: new Set(matched.map((r) => r._rid)),
           totalMatchedAmount,
           totalVariance,
         };
         renderReconciliationResult(resultHolder);
-        showToast("Reconciliation match run completed.", "success");
+        showToast(`Bank statement uploaded (${uploadRes.total_items} items) and auto-matched.`, "success");
       } catch (err) {
         errorEl.textContent = err.message;
         errorEl.hidden = false;

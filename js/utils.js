@@ -30,6 +30,86 @@ export function titleCase(value) {
   return String(value).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const activeLoadingButtons = new Map();
+
+export function setButtonLoadingState(button, loading = true, loadingLabel = null) {
+  if (!button || !(button instanceof HTMLElement)) return;
+
+  if (loading) {
+    if (activeLoadingButtons.has(button)) return;
+
+    button.classList.add("is-loading");
+    button.setAttribute("aria-disabled", "true");
+    button.style.pointerEvents = "none";
+
+    let spinner = button.querySelector(".btn-spinner");
+    if (!spinner) {
+      spinner = document.createElement("span");
+      spinner.className = "btn-spinner";
+      spinner.setAttribute("aria-hidden", "true");
+      button.prepend(spinner);
+    }
+
+    activeLoadingButtons.set(button, Date.now());
+    return;
+  }
+
+  const startTime = activeLoadingButtons.get(button);
+  const finish = () => {
+    button.classList.remove("is-loading");
+    button.removeAttribute("aria-disabled");
+    button.style.pointerEvents = "";
+    const spinner = button.querySelector(".btn-spinner");
+    if (spinner) spinner.remove();
+  };
+
+  if (startTime) {
+    activeLoadingButtons.delete(button);
+    const elapsed = Date.now() - startTime;
+    const minTime = 350; // Keep spinner visible for at least 350ms
+    const remaining = Math.max(0, minTime - elapsed);
+    if (remaining > 0) {
+      setTimeout(finish, remaining);
+    } else {
+      finish();
+    }
+  } else {
+    finish();
+  }
+}
+
+/** Registers global click and submit handlers to show loading spinners on all buttons. */
+export function initGlobalButtonSpinners() {
+  document.addEventListener(
+    "click",
+    (e) => {
+      const btn = e.target?.closest ? e.target.closest("button, .btn, [role='button']") : null;
+      if (!btn || btn.getAttribute("aria-disabled") === "true" || btn.classList.contains("is-loading")) return;
+      setButtonLoadingState(btn, true);
+      setTimeout(() => {
+        setButtonLoadingState(btn, false);
+      }, 450);
+    },
+    false
+  );
+
+  document.addEventListener(
+    "submit",
+    (e) => {
+      const form = e.target;
+      if (!form || !(form instanceof HTMLFormElement)) return;
+      const submitBtn = form.querySelector("button[type='submit'], button.btn-primary, button:not([type='button'])");
+      if (!submitBtn) return;
+      setButtonLoadingState(submitBtn, true);
+      setTimeout(() => {
+        setButtonLoadingState(submitBtn, false);
+      }, 550);
+    },
+    false
+  );
+}
+
+/** Minimal, dependency-free element builder. */
 export function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
@@ -37,7 +117,23 @@ export function el(tag, attrs = {}, children = []) {
     else if (key === "style" && typeof value === "object") Object.assign(node.style, value);
     else if (key === "html") node.innerHTML = value;
     else if (key.startsWith("on") && typeof value === "function") {
-      node.addEventListener(key.slice(2).toLowerCase(), value);
+      const eventName = key.slice(2).toLowerCase();
+      node.addEventListener(eventName, async (event) => {
+        if (eventName === "click" && node.tagName === "BUTTON") {
+          setButtonLoadingState(node, true);
+        }
+
+        try {
+          const result = value(event);
+          if (result && typeof result.then === "function") {
+            await result;
+          }
+        } finally {
+          if (eventName === "click" && node.tagName === "BUTTON") {
+            setButtonLoadingState(node, false);
+          }
+        }
+      });
     } else if (value !== undefined && value !== null && value !== false) {
       node.setAttribute(key, value === true ? "" : value);
     }

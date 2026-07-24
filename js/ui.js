@@ -35,26 +35,36 @@ export function Card({ title, subtitle, actions, className = "", children, noPad
 // --- Stat card with sparkline + delta ---------------------------------------
 
 export function StatCard({ label, value, sub, tone = "pine", icon, delta, sparkData, onClick, href }) {
-  const inner = [
-    el("div", { class: "label" }, label),
-    el("div", { class: "value ledger" }, value),
-  ];
-  if (sub) inner.push(el("div", { class: "sub" }, sub));
+  const header = el("div", { class: "stat-header" }, [
+    el("div", { class: "stat-label" }, label),
+    icon ? el("div", { class: `stat-icon stat-icon-${tone}` }, [iconEl(icon)]) : null,
+  ].filter(Boolean));
+
+  let deltaEl = null;
   if (delta !== undefined && delta !== null) {
     const sign = delta >= 0 ? "+" : "";
     const cls = delta >= 0 ? "delta-up" : "delta-down";
-    inner.push(el("div", { class: `stat-delta ${cls}` }, `${sign}${delta.toFixed(2)}%`));
+    deltaEl = el("span", { class: `stat-delta ${cls}` }, `${sign}${delta.toFixed(2)}%`);
   }
-  const left = el("div", { class: "stat-left" }, inner);
-  const right = [];
-  if (icon) right.push(el("div", { class: `stat-icon stat-icon-${tone}` }, [iconEl(icon)]));
+
+  const valueRow = el("div", { class: "stat-value-row" }, [
+    el("span", { class: "stat-value ledger" }, value),
+    deltaEl,
+  ].filter(Boolean));
+
+  const footerChildren = [];
+  if (sub) footerChildren.push(el("div", { class: "stat-sub" }, sub));
   if (sparkData && Array.isArray(sparkData) && sparkData.length > 1) {
-    right.push(Sparkline(sparkData, tone));
+    footerChildren.push(Sparkline(sparkData, tone));
   }
+
+  const footer = el("div", { class: "stat-footer" }, footerChildren);
+
   const card = el("div", {
     class: `card stat-card stat-card-rich stat-${tone}${onClick || href ? " clickable" : ""}`,
     onclick: onClick || (href ? () => { window.location.hash = href; } : undefined),
-  }, [left, ...right]);
+  }, [header, valueRow, footer]);
+
   return card;
 }
 

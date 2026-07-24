@@ -15,15 +15,25 @@ function parseHash() {
 
 async function renderRoute() {
   const { path, query } = parseHash();
-  const authed = isAuthenticated();
 
   const loginScreen = document.getElementById("login-screen");
   const appShell = document.getElementById("app-shell");
 
+  if (path === "/login") {
+    loginScreen.hidden = false;
+    appShell.hidden = true;
+    document.getElementById("view-root").innerHTML = "";
+    return;
+  }
+
+  const authed = isAuthenticated();
   if (!authed) {
     loginScreen.hidden = false;
     appShell.hidden = true;
     document.getElementById("view-root").innerHTML = "";
+    if (window.location.hash !== "#/login") {
+      window.location.hash = "#/login";
+    }
     return;
   }
 

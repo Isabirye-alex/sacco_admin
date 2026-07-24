@@ -177,11 +177,13 @@ async function renderApplicationsTab(content, root) {
 async function openLoanDetail(loanId, content, root) {
   const loan = await api.get(`/api/v1/loans/applications/${loanId}`);
   
-  // FETCH ADDITIONAL CONTEXT IN PARALLEL FOR RISK EVALUATION PANEL
-  const [member, holdings, memberLoans] = await Promise.all([
+  // FETCH ADDITIONAL CONTEXT IN PARALLEL FOR RISK EVALUATION PANEL & GROUP GUARANTEES
+  const [member, holdings, memberLoans, groupGuarantees, allGroups] = await Promise.all([
     api.get(`/api/v1/members/${loan.member_id}`).catch(() => null),
     api.get(`/api/v1/shares/members/${loan.member_id}/holdings`).catch(() => []),
     api.get(`/api/v1/loans/applications?member_id=${loan.member_id}`).catch(() => []),
+    api.get(`/api/v1/loans/applications/${loan.id}/group-guarantees`).catch(() => []),
+    api.get(`/api/v1/groups`).catch(() => []),
   ]);
 
   // Compute stats for Loan Details Panel
@@ -236,9 +238,9 @@ async function openLoanDetail(loanId, content, root) {
     ]);
     body.push(metricsPanel);
 
-    // Guarantors grid
+    // Individual Guarantors grid
     if (loan.guarantors?.length) {
-      body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Guarantors list"));
+      body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Individual Guarantors"));
       body.push(dataTable(
         [
           { header: "Amount Guaranteed", className: "ledger", render: (g) => `UGX ${formatMoney(g.amount_guaranteed)}` },
@@ -248,6 +250,56 @@ async function openLoanDetail(loanId, content, root) {
       ));
     }
 
+    // Group Loan Guarantees Section
+    const groupHeader = el("div", { style: "display:flex; justify-content:space-between; align-items:center; margin-top:15px; margin-bottom:8px;" }, [
+      el("div", { class: "section-title", style: "font-weight:600; margin:0;" }, "Group Loan Guarantees"),
+      ["pending", "under_review"].includes(loan.status)
+        ? el("button", {
+            class: "btn btn-secondary btn-sm",
+            onclick: () => openAttachGroupGuaranteeModal(loan, allGroups, closeFn, content, root),
+          }, "+ Attach Group Guarantee")
+        : el("span", {}),
+    ]);
+    body.push(groupHeader);
+
+    const groupGuaranteeTable = dataTable(
+      [
+        {
+          header: "Group Name",
+          render: (gg) => {
+            const grp = allGroups.find((g) => g.id === gg.group_id);
+            return grp ? el("strong", {}, grp.name) : gg.group_id;
+          },
+        },
+        { header: "Amount Guaranteed", className: "ledger", render: (gg) => `UGX ${formatMoney(gg.amount_guaranteed)}` },
+        { header: "Status", render: (gg) => (gg.approved ? badge("approved") : badge("pending")) },
+        {
+          header: "Actions",
+          render: (gg) => {
+            if (!gg.approved && ["pending", "under_review"].includes(loan.status)) {
+              return el("button", {
+                class: "btn btn-primary btn-sm",
+                onclick: async () => {
+                  try {
+                    await api.post(`/api/v1/loans/group-guarantees/${gg.id}/approve`);
+                    showToast("Group guarantee approved successfully.", "success");
+                    closeFn();
+                    openLoanDetail(loan.id, content, root);
+                  } catch (err) {
+                    showToast(err.message, "error");
+                  }
+                },
+              }, "Approve");
+            }
+            return gg.approved ? el("span", { class: "muted small" }, `Approved ${gg.approved_at ? formatDate(gg.approved_at) : ""}`) : "—";
+          },
+        },
+      ],
+      groupGuarantees,
+      "No group guarantees attached."
+    );
+    body.push(groupGuaranteeTable);
+
     // Collaterals list
     if (loan.collaterals?.length) {
       body.push(el("div", { class: "section-title", style: "font-weight:600; margin-top: 15px;" }, "Collateral Assets"));
@@ -255,6 +307,28 @@ async function openLoanDetail(loanId, content, root) {
         [
           { header: "Type", render: (c) => titleCase(c.collateral_type) },
           { header: "Value", className: "ledger", render: (c) => `UGX ${formatMoney(c.estimated_value)}` },
+          { header: "Status", render: (c) => (c.is_released ? badge("released") : badge("held")) },
+          {
+            header: "Actions",
+            render: (c) => {
+              if (!c.is_released) {
+                return el("button", {
+                  class: "btn btn-secondary btn-sm",
+                  onclick: async () => {
+                    try {
+                      await api.post(`/api/v1/loans/collateral/${c.id}/release`);
+                      showToast("Collateral asset released.", "success");
+                      closeFn();
+                      openLoanDetail(loan.id, content, root);
+                    } catch (err) {
+                      showToast(err.message, "error");
+                    }
+                  },
+                }, "Release Collateral");
+              }
+              return el("span", { class: "muted small" }, `Released ${c.released_at ? formatDate(c.released_at) : ""}`);
+            },
+          },
         ],
         loan.collaterals
       ));
@@ -280,8 +354,9 @@ async function openLoanDetail(loanId, content, root) {
         },
       }, "View Repayment Schedule"));
 
-      // Recovery actions for active loans
-      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => restructureLoan(loan, closeFn, content, root) }, "Restructure Loan"));
+      // Recovery and restructuring actions for active loans
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => restructureLoan(loan, closeFn, content, root) }, "Reschedule Term"));
+      actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => openTopUpModal(loan, closeFn, content, root) }, "Loan Top-Up"));
       actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => waivePenalties(loan, closeFn, content, root) }, "Waive Penalties"));
       actions.appendChild(el("button", { class: "btn btn-danger btn-sm", onclick: () => writeOffLoan(loan, closeFn, content, root) }, "Write off Loan"));
       actions.appendChild(el("button", { class: "btn btn-secondary btn-sm", onclick: () => triggerGuarantorNotices(loan) }, "Alert Guarantors"));
@@ -573,6 +648,42 @@ function restructureLoan(loan, closeParent, content, root) {
   });
 }
 
+function openTopUpModal(loan, closeParent, content, root) {
+  openModal(`Loan Top-Up \u2014 ${loan.loan_number}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    const topUpInput = el("input", { type: "number", required: true, min: "1000", step: "1" });
+    const termInput = el("input", { type: "number", value: loan.repayment_months, required: true, min: "1" });
+    const form = el("form", {}, [
+      el("p", { class: "muted" }, "Issues additional principal onto an existing active loan and recalculates future installments."),
+      el("div", { class: "field" }, [el("label", {}, "Top-Up Amount (UGX)"), topUpInput]),
+      el("div", { class: "field" }, [el("label", {}, "New Total Repayment Term (months)"), termInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Process Top-Up"),
+      ]),
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await api.post(`/api/v1/loans/applications/${loan.id}/top-up`, {
+          top_up_amount: Number(topUpInput.value),
+          new_repayment_months: Number(termInput.value),
+        });
+        showToast("Loan top-up processed successfully.", "success");
+        closeFn(); if (closeParent) closeParent();
+        await renderTabContent(content, root);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
+}
+
 // 6. Waive penalties manually - now actually clears penalty_due on unpaid installments
 async function waivePenalties(loan, closeParent, content, root) {
   const ok = await confirmDialog("Are you sure you want to waive all outstanding penalties on this loan account?", "Waive", false);
@@ -613,4 +724,60 @@ async function triggerGuarantorNotices(loan) {
   } catch (err) {
     showToast(err.message, "error");
   }
+}
+
+function openAttachGroupGuaranteeModal(loan, allGroups, closeParent, content, root) {
+  openModal(`Attach Group Guarantee \u2014 ${loan.loan_number}`, (closeFn) => {
+    const errorEl = el("p", { class: "form-error", hidden: true });
+    if (!allGroups.length) {
+      return [
+        el("p", { class: "muted" }, "No member groups exist yet. Create a group under 'Groups' first."),
+        el("div", { class: "modal-actions" }, [
+          el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Close"),
+        ]),
+      ];
+    }
+
+    const groupSelect = el(
+      "select",
+      { id: "gg-group", required: true },
+      allGroups.map((g) => el("option", { value: g.id }, g.name))
+    );
+    const amountInput = el("input", {
+      id: "gg-amount",
+      type: "number",
+      step: "0.01",
+      value: String(loan.amount_requested),
+      required: true,
+    });
+
+    const form = el("form", {}, [
+      el("div", { class: "field" }, [el("label", {}, "Select Member Group"), groupSelect]),
+      el("div", { class: "field" }, [el("label", {}, "Amount Guaranteed (UGX)"), amountInput]),
+      errorEl,
+      el("div", { class: "modal-actions" }, [
+        el("button", { type: "button", class: "btn btn-secondary", onclick: closeFn }, "Cancel"),
+        el("button", { type: "submit", class: "btn btn-primary" }, "Attach Guarantee"),
+      ]),
+    ]);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await api.post(`/api/v1/loans/applications/${loan.id}/group-guarantees`, {
+          group_id: groupSelect.value,
+          amount_guaranteed: Number(amountInput.value),
+        });
+        showToast("Group guarantee attached.", "success");
+        closeFn();
+        if (closeParent) closeParent();
+        openLoanDetail(loan.id, content, root);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+      }
+    });
+    return [form];
+  });
 }

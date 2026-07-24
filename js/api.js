@@ -7,13 +7,31 @@ const ACCESS_KEY = "sacco_access_token";
 const REFRESH_KEY = "sacco_refresh_token";
 
 export const tokenStore = {
-  getAccess: () => localStorage.getItem(ACCESS_KEY),
-  getRefresh: () => localStorage.getItem(REFRESH_KEY),
-  set(access, refresh) {
-    localStorage.setItem(ACCESS_KEY, access);
-    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+  getAccess() {
+    return sessionStorage.getItem(ACCESS_KEY) || localStorage.getItem(ACCESS_KEY);
+  },
+  getRefresh() {
+    return sessionStorage.getItem(REFRESH_KEY) || localStorage.getItem(REFRESH_KEY);
+  },
+  isPersistent() {
+    return Boolean(localStorage.getItem(ACCESS_KEY) || localStorage.getItem(REFRESH_KEY));
+  },
+  set(access, refresh, remember = false) {
+    if (remember) {
+      localStorage.setItem(ACCESS_KEY, access);
+      if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+      sessionStorage.removeItem(ACCESS_KEY);
+      sessionStorage.removeItem(REFRESH_KEY);
+    } else {
+      sessionStorage.setItem(ACCESS_KEY, access);
+      if (refresh) sessionStorage.setItem(REFRESH_KEY, refresh);
+      localStorage.removeItem(ACCESS_KEY);
+      localStorage.removeItem(REFRESH_KEY);
+    }
   },
   clear() {
+    sessionStorage.removeItem(ACCESS_KEY);
+    sessionStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(ACCESS_KEY);
     localStorage.removeItem(REFRESH_KEY);
   },
@@ -38,7 +56,7 @@ async function refreshAccessToken() {
     });
     if (!res.ok) return false;
     const data = await res.json();
-    tokenStore.set(data.access_token, data.refresh_token);
+    tokenStore.set(data.access_token, data.refresh_token, tokenStore.isPersistent());
     return true;
   } catch {
     return false;
